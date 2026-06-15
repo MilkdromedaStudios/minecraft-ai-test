@@ -1,14 +1,14 @@
 package com.milkdromeda.aiassistant.entity.goal;
 
 import com.milkdromeda.aiassistant.entity.AiAssistantEntity;
-import net.minecraft.entity.ai.goal.Goal;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.entity.player.Player;
 
 import java.util.EnumSet;
 
 public class FollowOwnerGoal extends Goal {
     private final AiAssistantEntity entity;
-    private PlayerEntity owner;
+    private Player owner;
     private final double speed;
     private final double minDist;
     private final double maxDist;
@@ -18,34 +18,32 @@ public class FollowOwnerGoal extends Goal {
         this.speed = speed;
         this.minDist = minDist;
         this.maxDist = maxDist;
-        this.setControls(EnumSet.of(Control.MOVE, Control.LOOK));
+        this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
     }
 
     @Override
-    public boolean canStart() {
+    public boolean canUse() {
         if (entity.getMode() != AiAssistantEntity.Mode.FOLLOWING) return false;
         owner = entity.getOwnerPlayer();
-        return owner != null && entity.squaredDistanceTo(owner) > minDist * minDist;
+        return owner != null && entity.distanceToSqr(owner) > minDist * minDist;
     }
 
     @Override
-    public boolean shouldContinue() {
+    public boolean canContinueToUse() {
         return entity.getMode() == AiAssistantEntity.Mode.FOLLOWING
                 && owner != null
-                && entity.squaredDistanceTo(owner) > minDist * minDist;
+                && entity.distanceToSqr(owner) > minDist * minDist;
     }
 
     @Override
     public void tick() {
         if (owner == null) return;
-        double distSq = entity.squaredDistanceTo(owner);
+        entity.getLookControl().setLookAt(owner, 30f, 30f);
 
-        if (distSq > maxDist * maxDist) {
-            // Teleport if too far — use requestTeleport for safe server-side movement
-            entity.teleport(owner.getX(), owner.getY(), owner.getZ(), true);
+        if (entity.distanceToSqr(owner) > maxDist * maxDist) {
+            entity.setPos(owner.getX(), owner.getY(), owner.getZ());
         } else {
-            entity.getLookControl().lookAt(owner, 30f, 30f);
-            entity.getNavigation().startMovingTo(owner, speed);
+            entity.getNavigation().moveTo(owner, speed);
         }
     }
 

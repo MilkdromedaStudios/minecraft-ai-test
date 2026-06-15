@@ -1,24 +1,24 @@
 package com.milkdromeda.aiassistant.client.render;
 
-import net.minecraft.client.model.Dilation;
-import net.minecraft.client.model.ModelData;
-import net.minecraft.client.model.ModelPart;
-import net.minecraft.client.model.TexturedModelData;
-import net.minecraft.client.render.entity.model.BipedEntityModel;
-import net.minecraft.client.render.entity.model.EntityModelLayer;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.model.HumanoidModel;
+import net.minecraft.client.model.geom.ModelLayerLocation;
+import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.client.model.geom.builders.CubeDeformation;
+import net.minecraft.client.model.geom.builders.LayerDefinition;
+import net.minecraft.client.model.geom.builders.MeshDefinition;
+import net.minecraft.resources.Identifier;
 
-public class AiAssistantEntityModel extends BipedEntityModel<AiAssistantEntityRenderState> {
+public class AiAssistantEntityModel extends HumanoidModel<AiAssistantEntityRenderState> {
 
-    public static final EntityModelLayer LAYER =
-            new EntityModelLayer(Identifier.of("ai-assistant", "ai_assistant"), "main");
+    public static final ModelLayerLocation LAYER =
+            new ModelLayerLocation(Identifier.fromNamespaceAndPath("ai-assistant", "ai_assistant"), "main");
 
     public AiAssistantEntityModel(ModelPart root) {
         super(root);
     }
 
-    public static TexturedModelData createModelData() {
-        ModelData modelData = BipedEntityModel.getModelData(Dilation.NONE, 0.0f);
-        return TexturedModelData.of(modelData, 64, 64);
+    public static LayerDefinition createModelData() {
+        MeshDefinition mesh = HumanoidModel.createMesh(CubeDeformation.NONE, 0.0f);
+        return LayerDefinition.create(mesh, 64, 64);
     }
 }
