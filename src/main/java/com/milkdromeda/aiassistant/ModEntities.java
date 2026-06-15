@@ -1,30 +1,30 @@
 package com.milkdromeda.aiassistant;
 
 import com.milkdromeda.aiassistant.entity.AiAssistantEntity;
-import net.minecraft.entity.EntityDimensions;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.SpawnGroup;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.util.Identifier;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.MobCategory;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.core.Registry;
 
 public class ModEntities {
     public static EntityType<AiAssistantEntity> AI_ASSISTANT;
 
     public static void register() {
-        RegistryKey<EntityType<?>> key = RegistryKey.of(
-                RegistryKeys.ENTITY_TYPE,
-                Identifier.of("ai-assistant", "ai_assistant"));
+        ResourceKey<EntityType<?>> key = ResourceKey.create(
+                Registries.ENTITY_TYPE,
+                Identifier.fromNamespaceAndPath("ai-assistant", "ai_assistant"));
 
         AI_ASSISTANT = Registry.register(
-                Registries.ENTITY_TYPE,
+                BuiltInRegistries.ENTITY_TYPE,
                 key,
-                EntityType.Builder.<AiAssistantEntity>create(AiAssistantEntity::new, SpawnGroup.CREATURE)
-                        .dimensions(0.6f, 1.8f)
-                        .maxTrackingRange(80)
-                        .trackingTickInterval(3)
+                EntityType.Builder.<AiAssistantEntity>of(AiAssistantEntity::new, MobCategory.CREATURE)
+                        .sized(0.6f, 1.8f)
+                        .clientTrackingRange(10)
+                        .updateInterval(3)
                         .build(key)
         );
     }

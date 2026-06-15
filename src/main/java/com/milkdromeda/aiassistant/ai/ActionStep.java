@@ -5,16 +5,8 @@ import com.google.gson.JsonObject;
 public record ActionStep(ActionType type, JsonObject params) {
 
     public enum ActionType {
-        MOVE_TO,
-        PLACE_BLOCK,
-        BREAK_BLOCK,
-        ATTACK_NEAREST,
-        FOLLOW_PLAYER,
-        LOOK_AT,
-        CHAT,
-        WAIT,
-        COLLECT_ITEM,
-        STOP
+        MOVE_TO, PLACE_BLOCK, BREAK_BLOCK, ATTACK_NEAREST,
+        FOLLOW_PLAYER, LOOK_AT, CHAT, WAIT, COLLECT_ITEM, STOP
     }
 
     public int getInt(String key, int fallback) {

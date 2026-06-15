@@ -69,13 +69,19 @@ public class HuggingFaceClient {
                 .build();
 
         return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(resp -> parseResponse(resp.body(), task));
+                .thenApply(resp -> {
+                    if (resp.statusCode() != 200) {
+                        String preview = resp.body().substring(0, Math.min(120, resp.body().length()));
+                        return errorPlan(task, "HTTP " + resp.statusCode() + ": " + preview);
+                    }
+                    return parseResponse(resp.body(), task);
+                })
+                .exceptionally(ex -> errorPlan(task, ex.getMessage()));
     }
 
     private String buildPrompt(String task, String context) {
         return "[INST] <<SYS>>\n" + SYSTEM_PROMPT + "\n<</SYS>>\n\n"
-                + "Context:\n" + context + "\n\n"
-                + "Task: " + task + " [/INST]";
+                + "Context:\n" + context + "\n\nTask: " + task + " [/INST]";
     }
 
     private ActionPlan parseResponse(String rawBody, String originalTask) {
@@ -84,21 +90,20 @@ public class HuggingFaceClient {
             String generated;
 
             if (root.isJsonArray()) {
-                JsonObject first = root.getAsJsonArray().get(0).getAsJsonObject();
-                generated = first.get("generated_text").getAsString().trim();
+                generated = root.getAsJsonArray().get(0).getAsJsonObject()
+                        .get("generated_text").getAsString().trim();
             } else if (root.isJsonObject() && root.getAsJsonObject().has("generated_text")) {
                 generated = root.getAsJsonObject().get("generated_text").getAsString().trim();
             } else {
                 generated = rawBody;
             }
 
-            // Extract first JSON object from the generated text
             int start = generated.indexOf('{');
-            int end = generated.lastIndexOf('}');
-            if (start == -1 || end == -1) return fallbackPlan(originalTask, "No JSON in response");
+            int end   = generated.lastIndexOf('}');
+            if (start == -1 || end == -1) return errorPlan(originalTask, "No JSON in response");
 
             JsonObject plan = JsonParser.parseString(generated.substring(start, end + 1)).getAsJsonObject();
-            String thinking = plan.has("thinking") ? plan.get("thinking").getAsString() : "";
+            String thinking    = plan.has("thinking")    ? plan.get("thinking").getAsString()    : "";
             String description = plan.has("description") ? plan.get("description").getAsString() : originalTask;
 
             List<ActionStep> steps = new ArrayList<>();
@@ -108,24 +113,23 @@ public class HuggingFaceClient {
                     String actionStr = step.get("action").getAsString();
                     JsonObject params = step.has("params") ? step.getAsJsonObject("params") : new JsonObject();
                     try {
-                        ActionStep.ActionType type = ActionStep.ActionType.valueOf(actionStr);
-                        steps.add(new ActionStep(type, params));
+                        steps.add(new ActionStep(ActionStep.ActionType.valueOf(actionStr), params));
                     } catch (IllegalArgumentException ignored) {}
                 }
             }
 
-            if (steps.isEmpty()) return fallbackPlan(originalTask, "Empty step list");
+            if (steps.isEmpty()) return errorPlan(originalTask, "Empty step list");
             return new ActionPlan(thinking, description, steps);
 
         } catch (Exception e) {
-            return fallbackPlan(originalTask, "Parse error: " + e.getMessage());
+            return errorPlan(originalTask, "Parse error: " + e.getMessage());
         }
     }
 
-    private ActionPlan fallbackPlan(String task, String reason) {
+    private ActionPlan errorPlan(String task, String reason) {
         JsonObject params = new JsonObject();
-        params.addProperty("message", "I couldn't plan '" + task + "' (" + reason + ")");
-        return new ActionPlan("fallback", task,
+        params.addProperty("message", "Couldn't plan '" + task + "': " + reason);
+        return new ActionPlan("error", task,
                 List.of(new ActionStep(ActionStep.ActionType.CHAT, params)));
     }
 }

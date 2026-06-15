@@ -1,14 +1,14 @@
 package com.milkdromeda.aiassistant.entity.goal;
 
 import com.milkdromeda.aiassistant.entity.AiAssistantEntity;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.entity.ai.goal.Goal;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.EnumSet;
 import java.util.LinkedList;
@@ -20,76 +20,61 @@ public class BuildGoal extends Goal {
     private BuildTask current;
     private int waitTicks = 0;
 
+    public record BuildTask(BlockPos pos, String blockId) {}
+
     public BuildGoal(AiAssistantEntity entity) {
         this.entity = entity;
-        this.setControls(EnumSet.of(Control.MOVE, Control.LOOK));
+        this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK));
     }
-
-    public record BuildTask(BlockPos pos, String blockId) {}
 
     public void queueBlock(int x, int y, int z, String blockId) {
         tasks.add(new BuildTask(new BlockPos(x, y, z), blockId));
     }
 
-    public boolean hasTasks() {
-        return !tasks.isEmpty() || current != null;
-    }
+    public boolean hasTasks() { return !tasks.isEmpty() || current != null; }
 
-    public void clearTasks() {
-        tasks.clear();
-        current = null;
-    }
+    public void clearTasks() { tasks.clear(); current = null; }
 
     @Override
-    public boolean canStart() {
+    public boolean canUse() {
         return entity.getMode() == AiAssistantEntity.Mode.BUILDING && hasTasks();
     }
 
     @Override
-    public boolean shouldContinue() {
+    public boolean canContinueToUse() {
         return entity.getMode() == AiAssistantEntity.Mode.BUILDING && hasTasks();
     }
 
     @Override
     public void tick() {
-        if (waitTicks > 0) {
-            waitTicks--;
-            return;
-        }
+        if (waitTicks > 0) { waitTicks--; return; }
 
         if (current == null) {
             current = tasks.poll();
             if (current == null) return;
         }
 
-        Vec3d targetCenter = Vec3d.ofCenter(current.pos());
-        double dist = entity.squaredDistanceTo(targetCenter.x, targetCenter.y, targetCenter.z);
-
-        if (dist > 16) {
-            entity.getNavigation().startMovingTo(
-                    current.pos().getX(), current.pos().getY(), current.pos().getZ(), 1.0);
+        Vec3 center = Vec3.atCenterOf(current.pos());
+        if (entity.distanceToSqr(center) > 16) {
+            entity.getNavigation().moveTo(center.x, center.y, center.z, 1.0);
             return;
         }
 
-        entity.getLookControl().lookAt(targetCenter.x, targetCenter.y, targetCenter.z, 30f, 30f);
+        entity.getLookControl().setLookAt(center.x, center.y, center.z, 30f, 30f);
         placeBlock(current.pos(), current.blockId());
-        entity.swingHand(net.minecraft.util.Hand.MAIN_HAND);
+        entity.swing(InteractionHand.MAIN_HAND);
         current = null;
         waitTicks = com.milkdromeda.aiassistant.config.ModConfig.get().actionTickDelay / 2;
     }
 
     private void placeBlock(BlockPos pos, String blockId) {
-        World world = entity.getWorld();
-        if (world.isClient) return;
-
+        Level level = entity.level();
+        if (level.isClientSide()) return;
         Identifier id = Identifier.tryParse(blockId);
         if (id == null) return;
-
-        Block block = Registries.BLOCK.get(id);
-        BlockState state = block.getDefaultState();
-
-        if (world.getBlockState(pos).isReplaceable()) {
-            world.setBlockState(pos, state, Block.NOTIFY_ALL);
+        Block block = BuiltInRegistries.BLOCK.get(id).orElseThrow().value();
+        if (level.getBlockState(pos).canBeReplaced()) {
+            level.setBlock(pos, block.defaultBlockState(), Block.UPDATE_ALL);
         }
     }
 }

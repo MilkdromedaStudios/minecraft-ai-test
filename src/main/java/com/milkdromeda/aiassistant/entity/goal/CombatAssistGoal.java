@@ -1,13 +1,14 @@
 package com.milkdromeda.aiassistant.entity.goal;
 
+import com.milkdromeda.aiassistant.config.ModConfig;
 import com.milkdromeda.aiassistant.entity.AiAssistantEntity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.ai.goal.Goal;
-import net.minecraft.entity.mob.HostileEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Hand;
-import net.minecraft.util.math.Box;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.AABB;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -19,11 +20,11 @@ public class CombatAssistGoal extends Goal {
 
     public CombatAssistGoal(AiAssistantEntity entity) {
         this.entity = entity;
-        this.setControls(EnumSet.of(Control.MOVE, Control.LOOK, Control.TARGET));
+        this.setFlags(EnumSet.of(Flag.MOVE, Flag.LOOK, Flag.TARGET));
     }
 
     @Override
-    public boolean canStart() {
+    public boolean canUse() {
         if (entity.getMode() != AiAssistantEntity.Mode.GUARDING
                 && entity.getMode() != AiAssistantEntity.Mode.FOLLOWING) return false;
         target = findNearestHostile();
@@ -31,9 +32,9 @@ public class CombatAssistGoal extends Goal {
     }
 
     @Override
-    public boolean shouldContinue() {
+    public boolean canContinueToUse() {
         return target != null && target.isAlive()
-                && entity.squaredDistanceTo(target) < 256
+                && entity.distanceToSqr(target) < 256
                 && (entity.getMode() == AiAssistantEntity.Mode.GUARDING
                     || entity.getMode() == AiAssistantEntity.Mode.FOLLOWING
                     || entity.getMode() == AiAssistantEntity.Mode.FIGHTING);
@@ -52,13 +53,13 @@ public class CombatAssistGoal extends Goal {
             if (target == null) return;
         }
 
-        entity.getLookControl().lookAt(target, 30f, 30f);
-        entity.getNavigation().startMovingTo(target, 1.2);
+        entity.getLookControl().setLookAt(target, 30f, 30f);
+        entity.getNavigation().moveTo(target, 1.2);
 
-        if (attackCooldown <= 0 && entity.squaredDistanceTo(target) < 9) {
-            entity.swingHand(Hand.MAIN_HAND);
-            if (entity.getWorld() instanceof ServerWorld sw) {
-                entity.tryAttack(sw, target);
+        if (attackCooldown <= 0 && entity.distanceToSqr(target) < 9) {
+            entity.swing(InteractionHand.MAIN_HAND);
+            if (entity.level() instanceof ServerLevel sl) {
+                entity.doHurtTarget(sl, target);
             }
             attackCooldown = 20;
         } else {
@@ -76,20 +77,18 @@ public class CombatAssistGoal extends Goal {
     }
 
     private LivingEntity findNearestHostile() {
-        double guardRadius = com.milkdromeda.aiassistant.config.ModConfig.get().guardRadius;
-        Box searchBox = Box.of(entity.getPos(), guardRadius * 2, 10, guardRadius * 2);
+        double radius = ModConfig.get().guardRadius;
+        AABB box = AABB.ofSize(entity.position(), radius * 2, 10, radius * 2);
+        List<Monster> hostiles = entity.level().getEntitiesOfClass(Monster.class, box,
+                e -> e.isAlive() && (net.minecraft.world.entity.Entity)e != entity);
 
-        List<HostileEntity> hostiles = entity.getWorld()
-                .getEntitiesByClass(HostileEntity.class, searchBox, e -> e.isAlive());
-
-        PlayerEntity owner = entity.getOwnerPlayer();
-        if (owner != null) {
-            LivingEntity ownerTarget = owner.getAttacking();
-            if (ownerTarget instanceof HostileEntity h && h.isAlive()) return h;
+        Player owner = entity.getOwnerPlayer();
+        if (owner != null && owner.getLastHurtByMob() instanceof Monster m && m.isAlive()) {
+            return m;
         }
 
         return hostiles.stream()
-                .min((a, b) -> Double.compare(entity.squaredDistanceTo(a), entity.squaredDistanceTo(b)))
+                .min((a, b) -> Double.compare(entity.distanceToSqr(a), entity.distanceToSqr(b)))
                 .orElse(null);
     }
 }

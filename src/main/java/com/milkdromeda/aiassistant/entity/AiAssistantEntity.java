@@ -3,21 +3,23 @@ package com.milkdromeda.aiassistant.entity;
 import com.milkdromeda.aiassistant.ai.AiTaskManager;
 import com.milkdromeda.aiassistant.config.ModConfig;
 import com.milkdromeda.aiassistant.entity.goal.*;
-import net.minecraft.entity.*;
-import net.minecraft.entity.ai.goal.*;
-import net.minecraft.entity.attribute.DefaultAttributeContainer;
-import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.entity.mob.PathAwareEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.world.World;
+import com.milkdromeda.aiassistant.entity.goal.FollowOwnerGoal;
+import net.minecraft.core.UUIDUtil;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.*;
+import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.goal.*;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 
 import java.util.UUID;
 
-public class AiAssistantEntity extends PathAwareEntity {
+public class AiAssistantEntity extends PathfinderMob {
 
     public enum Mode {
         IDLE, FOLLOWING, BUILDING, FIGHTING, GUARDING, EXECUTING
@@ -31,48 +33,47 @@ public class AiAssistantEntity extends PathAwareEntity {
     private BuildGoal buildGoal;
     private int idleMessageTimer = 0;
 
-    public AiAssistantEntity(EntityType<? extends AiAssistantEntity> type, World world) {
-        super(type, world);
+    public AiAssistantEntity(EntityType<? extends AiAssistantEntity> type, Level level) {
+        super(type, level);
         this.taskManager = new AiTaskManager(this);
     }
 
     @Override
-    protected void initGoals() {
+    protected void registerGoals() {
         buildGoal = new BuildGoal(this);
         ExecuteTaskGoal executeGoal = new ExecuteTaskGoal(this);
 
-        goalSelector.add(1, new SwimGoal(this));
-        goalSelector.add(2, new CombatAssistGoal(this));
-        goalSelector.add(3, executeGoal);
-        goalSelector.add(4, buildGoal);
-        goalSelector.add(5, new com.milkdromeda.aiassistant.entity.goal.FollowOwnerGoal(
-                this, 1.0, ModConfig.get().followDistance, 64.0));
-        goalSelector.add(6, new LookAroundGoal(this));
-        goalSelector.add(7, new WanderAroundFarGoal(this, 0.8));
+        goalSelector.addGoal(1, new FloatGoal(this));
+        goalSelector.addGoal(2, new CombatAssistGoal(this));
+        goalSelector.addGoal(3, executeGoal);
+        goalSelector.addGoal(4, buildGoal);
+        goalSelector.addGoal(5, new com.milkdromeda.aiassistant.entity.goal.FollowOwnerGoal(this, 1.0, ModConfig.get().followDistance, 64.0));
+        goalSelector.addGoal(6, new RandomLookAroundGoal(this));
+        goalSelector.addGoal(7, new WaterAvoidingRandomStrollGoal(this, 0.8));
     }
 
-    public static DefaultAttributeContainer.Builder createAttributes() {
-        return PathAwareEntity.createMobAttributes()
-                .add(EntityAttributes.MAX_HEALTH, 20.0)
-                .add(EntityAttributes.MOVEMENT_SPEED, 0.3)
-                .add(EntityAttributes.ATTACK_DAMAGE, 6.0)
-                .add(EntityAttributes.FOLLOW_RANGE, 40.0)
-                .add(EntityAttributes.ARMOR, 4.0);
+    public static AttributeSupplier.Builder createAttributes() {
+        return Mob.createMobAttributes()
+                .add(Attributes.MAX_HEALTH, 20.0)
+                .add(Attributes.MOVEMENT_SPEED, 0.3)
+                .add(Attributes.ATTACK_DAMAGE, 6.0)
+                .add(Attributes.FOLLOW_RANGE, 40.0)
+                .add(Attributes.ARMOR, 4.0);
     }
 
     @Override
     public void tick() {
         super.tick();
-        if (getWorld().isClient) return;
+        if (level().isClientSide()) return;
 
         taskManager.tick();
 
         if (idleMessageTimer == 20 && mode == Mode.IDLE) {
-            broadcastMessage("Ready! Use /aiassistant task <description>");
+            messageOwner("Ready! Tell me what to do with /ai <task>");
         }
         idleMessageTimer++;
 
-        if (mode == Mode.FOLLOWING && getAttacker() != null) {
+        if (mode == Mode.FOLLOWING && getLastHurtByMob() != null) {
             mode = Mode.GUARDING;
         }
 
@@ -86,62 +87,60 @@ public class AiAssistantEntity extends PathAwareEntity {
         }
     }
 
-    public void giveTask(String task, ServerPlayerEntity issuer) {
+    public void giveTask(String task, ServerPlayer issuer) {
         if (!ModConfig.get().hasApiToken()) {
-            issuer.sendMessage(Text.literal(
-                    "[AI-Assistant] No HuggingFace API token. Use /aiassistant config hf_token <token>"), false);
+            issuer.sendSystemMessage(Component.literal(
+                    "[AI] No HuggingFace token. Use: /ai settings hf_token <token>"));
             return;
         }
         pendingTask = task;
         mode = Mode.EXECUTING;
         taskManager.clearPlan();
-        broadcastMessage("Thinking about: " + task);
+        broadcastMessage("Thinking: " + task);
         taskManager.requestPlan(task);
     }
 
     public void finishTask() {
-        broadcastMessage("Task complete: " + (pendingTask != null ? pendingTask : "done"));
+        broadcastMessage("Done: " + (pendingTask != null ? pendingTask : "task complete"));
         pendingTask = null;
         mode = Mode.FOLLOWING;
     }
 
-    public void startBuilding(int x, int y, int z, String blockId) {
-        buildGoal.clearTasks();
-        buildGoal.queueBlock(x, y, z, blockId);
-        mode = Mode.BUILDING;
-    }
-
-    public void queueBuildBlock(int x, int y, int z, String blockId) {
-        buildGoal.queueBlock(x, y, z, blockId);
-    }
-
     public void broadcastMessage(String msg) {
-        if (!getWorld().isClient) {
-            getWorld().getPlayers().forEach(p ->
-                    p.sendMessage(Text.literal("[" + assistantName + "] " + msg), false));
+        if (!level().isClientSide()) {
+            level().players().forEach(p ->
+                    p.sendSystemMessage(Component.literal("[" + assistantName + "] " + msg)));
+        }
+    }
+
+    private void messageOwner(String msg) {
+        Player owner = getOwnerPlayer();
+        if (owner != null) {
+            owner.sendSystemMessage(Component.literal("[" + assistantName + "] " + msg));
+        } else {
+            broadcastMessage(msg);
         }
     }
 
     // ---- NBT ----
 
     @Override
-    public void writeCustomDataToNbt(NbtCompound nbt) {
-        super.writeCustomDataToNbt(nbt);
-        nbt.putString("AssistantName", assistantName);
-        nbt.putString("Mode", mode.name());
-        if (ownerUuid != null) nbt.putUuid("OwnerUuid", ownerUuid);
-        if (pendingTask != null) nbt.putString("PendingTask", pendingTask);
+    protected void addAdditionalSaveData(ValueOutput output) {
+        super.addAdditionalSaveData(output);
+        output.putString("AssistantName", assistantName);
+        output.putString("Mode", mode.name());
+        if (ownerUuid != null) output.store("OwnerUuid", UUIDUtil.STRING_CODEC, ownerUuid);
+        if (pendingTask != null) output.putString("PendingTask", pendingTask);
     }
 
     @Override
-    public void readCustomDataFromNbt(NbtCompound nbt) {
-        super.readCustomDataFromNbt(nbt);
-        if (nbt.contains("AssistantName")) assistantName = nbt.getString("AssistantName");
-        if (nbt.contains("Mode")) {
-            try { mode = Mode.valueOf(nbt.getString("Mode")); } catch (IllegalArgumentException ignored) {}
-        }
-        if (nbt.containsUuid("OwnerUuid")) ownerUuid = nbt.getUuid("OwnerUuid");
-        if (nbt.contains("PendingTask")) pendingTask = nbt.getString("PendingTask");
+    protected void readAdditionalSaveData(ValueInput input) {
+        super.readAdditionalSaveData(input);
+        assistantName = input.getStringOr("AssistantName", "ARIA");
+        String modeStr = input.getStringOr("Mode", "FOLLOWING");
+        try { mode = Mode.valueOf(modeStr); } catch (IllegalArgumentException ignored) { mode = Mode.FOLLOWING; }
+        input.read("OwnerUuid", UUIDUtil.STRING_CODEC).ifPresent(uuid -> ownerUuid = uuid);
+        pendingTask = input.getString("PendingTask").orElse(null);
     }
 
     // ---- Getters / Setters ----
@@ -154,16 +153,14 @@ public class AiAssistantEntity extends PathAwareEntity {
     public void setOwnerUuid(UUID uuid) { this.ownerUuid = uuid; }
     public AiTaskManager getTaskManager() { return taskManager; }
 
-    public PlayerEntity getOwnerPlayer() {
+    public Player getOwnerPlayer() {
         if (ownerUuid == null) return null;
-        if (getWorld() instanceof ServerWorld sw) {
-            return sw.getPlayerByUuid(ownerUuid);
-        }
+        if (level() instanceof ServerLevel sl) return sl.getPlayerByUUID(ownerUuid);
         return null;
     }
 
     @Override
-    protected Text getDefaultName() {
-        return Text.literal(assistantName);
+    protected Component getTypeName() {
+        return Component.literal(assistantName);
     }
 }

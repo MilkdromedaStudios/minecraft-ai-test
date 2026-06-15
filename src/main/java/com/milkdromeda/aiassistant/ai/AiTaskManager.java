@@ -1,12 +1,12 @@
 package com.milkdromeda.aiassistant.ai;
 
 import com.milkdromeda.aiassistant.entity.AiAssistantEntity;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.mob.HostileEntity;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.phys.AABB;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -46,21 +46,13 @@ public class AiTaskManager {
         return currentPlan.poll();
     }
 
-    public boolean hasPlan() {
-        return currentPlan != null && !currentPlan.isEmpty();
-    }
-
-    public boolean isWaiting() {
-        return waitingForApi;
-    }
+    public boolean hasPlan() { return currentPlan != null && !currentPlan.isEmpty(); }
+    public boolean isWaiting() { return waitingForApi; }
 
     public void clearPlan() {
         currentPlan = null;
         waitingForApi = false;
-        if (pendingFuture != null) {
-            pendingFuture.cancel(true);
-            pendingFuture = null;
-        }
+        if (pendingFuture != null) { pendingFuture.cancel(true); pendingFuture = null; }
     }
 
     public String getPlanDescription() {
@@ -68,31 +60,28 @@ public class AiTaskManager {
     }
 
     private String buildContext() {
-        BlockPos pos = entity.getBlockPos();
+        BlockPos pos = entity.blockPosition();
         StringBuilder sb = new StringBuilder();
-        sb.append("AI position: ").append(pos.getX()).append(", ").append(pos.getY()).append(", ").append(pos.getZ()).append("\n");
+        sb.append("AI position: ").append(pos.getX()).append(",").append(pos.getY()).append(",").append(pos.getZ()).append("\n");
 
-        if (entity.getWorld() instanceof ServerWorld sw) {
-            List<ServerPlayerEntity> players = sw.getPlayers();
+        if (entity.level() instanceof ServerLevel sl) {
+            List<ServerPlayer> players = sl.players();
             if (!players.isEmpty()) {
-                sb.append("Nearby players: ");
+                sb.append("Players: ");
                 players.stream().limit(5).forEach(p ->
                         sb.append(p.getName().getString())
-                                .append("@").append(p.getBlockPos().getX())
-                                .append(",").append(p.getBlockPos().getY())
-                                .append(",").append(p.getBlockPos().getZ()).append(" "));
+                                .append("@").append(p.blockPosition().getX())
+                                .append(",").append(p.blockPosition().getY())
+                                .append(",").append(p.blockPosition().getZ()).append(" "));
                 sb.append("\n");
             }
 
-            Box searchBox = Box.of(entity.getPos(), 20, 10, 20);
-            List<HostileEntity> nearby = sw.getEntitiesByClass(HostileEntity.class, searchBox, Entity::isAlive);
-            if (!nearby.isEmpty()) {
-                sb.append("Hostile mobs nearby: ").append(nearby.size()).append("\n");
-            }
+            AABB box = AABB.ofSize(entity.position(), 20, 10, 20);
+            List<Monster> nearby = sl.getEntitiesOfClass(Monster.class, box, Entity::isAlive);
+            if (!nearby.isEmpty()) sb.append("Hostile mobs nearby: ").append(nearby.size()).append("\n");
         }
 
-        sb.append("Health: ").append((int) entity.getHealth())
-                .append("/").append((int) entity.getMaxHealth());
+        sb.append("Health: ").append((int) entity.getHealth()).append("/").append((int) entity.getMaxHealth());
         return sb.toString();
     }
 }
