@@ -27,7 +27,8 @@ public record ConfigData(
         double followDistance,
         double guardRadius,
         boolean allowCommands,
-        int commandPermissionLevel
+        int commandPermissionLevel,
+        String defaultSkin
 ) {
     public static final StreamCodec<FriendlyByteBuf, ConfigData> STREAM_CODEC =
             StreamCodec.of(ConfigData::write, ConfigData::read);
@@ -49,7 +50,8 @@ public record ConfigData(
                 c.followDistance,
                 c.guardRadius,
                 c.allowCommands,
-                c.commandPermissionLevel);
+                c.commandPermissionLevel,
+                c.defaultSkin);
     }
 
     /** Applies this snapshot onto the live config, clamping and keeping blanks. */
@@ -67,6 +69,7 @@ public record ConfigData(
         c.guardRadius = clamp(guardRadius, 4.0, 64.0);
         c.allowCommands = allowCommands;
         c.commandPermissionLevel = (int) clamp(commandPermissionLevel, 0, 4);
+        if (notBlank(defaultSkin)) c.defaultSkin = defaultSkin.trim();
     }
 
     private static boolean notBlank(String s) {
@@ -92,6 +95,7 @@ public record ConfigData(
         buf.writeDouble(d.guardRadius);
         buf.writeBoolean(d.allowCommands);
         buf.writeInt(d.commandPermissionLevel);
+        buf.writeUtf(d.defaultSkin == null ? "default" : d.defaultSkin);
     }
 
     private static ConfigData read(FriendlyByteBuf buf) {
@@ -109,6 +113,7 @@ public record ConfigData(
                 buf.readDouble(),
                 buf.readDouble(),
                 buf.readBoolean(),
-                buf.readInt());
+                buf.readInt(),
+                buf.readUtf());
     }
 }

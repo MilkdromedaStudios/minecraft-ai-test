@@ -51,6 +51,10 @@ public class AiCommands {
                                 .then(Commands.argument("name", StringArgumentType.greedyString())
                                         .executes(ctx -> rename(ctx, StringArgumentType.getString(ctx, "name")))))
 
+                        .then(Commands.literal("skin")
+                                .then(Commands.argument("skin", StringArgumentType.greedyString())
+                                        .executes(ctx -> setSkin(ctx, StringArgumentType.getString(ctx, "skin")))))
+
                         .then(Commands.literal("token")
                                 .then(Commands.argument("token", StringArgumentType.greedyString())
                                         .executes(ctx -> setToken(ctx, StringArgumentType.getString(ctx, "token")))))
@@ -138,8 +142,9 @@ public class AiCommands {
                 "§7It fights back while it thinks, runs commands, and keeps going on patrols.\n" +
                 "§6\n" +
                 "§eCommands:\n" +
-                "§f/ai menu §7— open the settings screen (default key: K)\n" +
+                "§f/ai menu §7— open the settings screen\n" +
                 "§f/ai summon [name] §7— bring a new assistant into the world\n" +
+                "§f/ai skin <name> §7— give it a custom skin\n" +
                 "§f/ai come §7— call it over to you\n" +
                 "§f/ai follow §7— have it follow you\n" +
                 "§f/ai stay §7— hold position and keep watch\n" +
@@ -168,6 +173,7 @@ public class AiCommands {
         if (entity == null) return 0;
 
         entity.setAssistantName(name);
+        entity.setSkin(ModConfig.get().defaultSkin);
         entity.setOwnerUuid(player.getUUID());
         entity.setPos(player.getX() + 1.5, player.getY(), player.getZ());
         entity.setMode(AiAssistantEntity.Mode.FOLLOWING);
@@ -252,6 +258,20 @@ public class AiCommands {
         String old = ai.getAssistantName();
         ai.setAssistantName(newName);
         player.sendSystemMessage(Component.literal("§aRenamed §f" + old + " §a→ §f" + newName));
+        return 1;
+    }
+
+    private static int setSkin(CommandContext<CommandSourceStack> ctx, String skin) {
+        ServerPlayer player = getPlayer(ctx);
+        if (player == null) return 0;
+
+        AiAssistantEntity ai = AiAssistantEntity.findFor(player, 64);
+        if (ai == null) return noAi(player);
+
+        ai.setSkin(skin);
+        player.sendSystemMessage(Component.literal(
+                "§aSkin set to §f" + skin + "§a. §7(\"default\", a namespace:path.png, "
+                        + "or a name under assets/ai-assistant/textures/entity/skins/)"));
         return 1;
     }
 
@@ -343,7 +363,7 @@ public class AiCommands {
             return 0;
         }
         ServerPlayNetworking.send(player, new ConfigSyncPayload(ConfigData.fromConfig()));
-        player.sendSystemMessage(Component.literal("§7Opening the AI Assistant menu… (default key: K)"));
+        player.sendSystemMessage(Component.literal("§7Opening the AI Assistant menu…"));
         return 1;
     }
 
@@ -371,7 +391,7 @@ public class AiCommands {
                 "§eMax tokens:     §f" + cfg.maxNewTokens + "\n" +
                 "§eFollow dist:    §f" + cfg.followDistance + "\n" +
                 "§eGuard radius:   §f" + cfg.guardRadius + "\n" +
-                "§7Tip: open the full menu with §f/ai menu§7 or the §fK§7 key. "
+                "§7Tip: open the full menu with §f/ai menu§7 (or sneak-right-click the assistant). "
                         + "Or change one value with /ai settings <key> <value>."
         ));
         return 1;

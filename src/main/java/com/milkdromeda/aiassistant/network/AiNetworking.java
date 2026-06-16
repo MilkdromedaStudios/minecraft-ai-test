@@ -18,9 +18,16 @@ public final class AiNetworking {
 
     /** Registers the three payload types. Safe to call on client and server. */
     public static void registerPayloads() {
-        PayloadTypeRegistry.playC2S().register(ConfigRequestPayload.TYPE, ConfigRequestPayload.CODEC);
-        PayloadTypeRegistry.playC2S().register(ConfigUpdatePayload.TYPE, ConfigUpdatePayload.CODEC);
-        PayloadTypeRegistry.playS2C().register(ConfigSyncPayload.TYPE, ConfigSyncPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(ConfigRequestPayload.TYPE, ConfigRequestPayload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(ConfigUpdatePayload.TYPE, ConfigUpdatePayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(ConfigSyncPayload.TYPE, ConfigSyncPayload.CODEC);
+    }
+
+    /** Sends the current config to a player so their client opens the settings menu. */
+    public static void openMenuFor(ServerPlayer player) {
+        if (ServerPlayNetworking.canSend(player, ConfigSyncPayload.TYPE)) {
+            ServerPlayNetworking.send(player, new ConfigSyncPayload(ConfigData.fromConfig()));
+        }
     }
 
     /** Registers the handlers that run on the (integrated or dedicated) server. */
@@ -28,7 +35,7 @@ public final class AiNetworking {
         // A client asked for the current config — reply with a sync so it can open the menu.
         ServerPlayNetworking.registerGlobalReceiver(ConfigRequestPayload.TYPE, (payload, context) -> {
             ServerPlayer player = context.player();
-            MinecraftServer server = player.getServer();
+            MinecraftServer server = player.level().getServer();
             if (server == null) return;
             server.execute(() ->
                     ServerPlayNetworking.send(player, new ConfigSyncPayload(ConfigData.fromConfig())));
@@ -37,7 +44,7 @@ public final class AiNetworking {
         // A client saved settings from the menu — validate, apply, persist.
         ServerPlayNetworking.registerGlobalReceiver(ConfigUpdatePayload.TYPE, (payload, context) -> {
             ServerPlayer player = context.player();
-            MinecraftServer server = player.getServer();
+            MinecraftServer server = player.level().getServer();
             if (server == null) return;
             server.execute(() -> {
                 payload.data().applyTo(ModConfig.get());

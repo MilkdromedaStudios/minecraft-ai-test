@@ -119,7 +119,7 @@ public class AiTaskManager {
                         .append(m.blockPosition().getZ()).append(")\n");
             }
 
-            long t = sl.getDayTime() % 24000L;
+            long t = sl.getOverworldClockTime() % 24000L;
             sb.append("Time: ").append(t >= 13000 && t < 23000 ? "night" : "day").append("\n");
 
             String interactables = scanInteractables(sl);

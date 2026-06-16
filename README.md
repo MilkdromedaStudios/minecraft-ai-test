@@ -49,6 +49,11 @@ turn a sentence into a sequence of in-game actions.
   retreats toward you when badly hurt instead of dying in place.
 - **Builds, breaks, digs & parkours** — places/breaks blocks, clears areas
   (`MINE_AREA`), jumps (`JUMP`) and crouches (`SET_SNEAK`).
+- **Custom skins** — give it any look with `/ai skin <name>`: a built-in skin,
+  a `namespace:path.png` texture, or your own PNG. Two skins ship in the box.
+- **Works in every gamemode** — survival, **adventure** and **creative**.
+  Right-click to toggle follow/stay and sneak-right-click to open its menu, so
+  you can command it hands-free even where you can't place or break blocks.
 - **Find it anywhere** — `/ai locate` reports distance, direction, and coords.
 - **Friendly errors** — connection problems give clear, actionable advice
   instead of raw `java.net.ConnectException` stack traces.
@@ -118,7 +123,7 @@ listening but turn off the proactive AI with `/ai active off`.
 | Command                | Description                                              |
 |------------------------|----------------------------------------------------------|
 | `/ai help`             | Show the in-game command list                            |
-| `/ai menu` / `/ai config` | Open the in-game settings menu (or press **K**)       |
+| `/ai menu` / `/ai config` | Open the in-game settings menu (or sneak-right-click it) |
 | `/ai summon [name]`    | Spawn an assistant (defaults to **Ethan**)               |
 | `/ai dismiss`          | Send your assistant away (removes it)                    |
 | `/ai come`             | Call it to you (teleports if far away)                   |
@@ -128,6 +133,7 @@ listening but turn off the proactive AI with `/ai active off`.
 | `/ai locate` / `/ai where` | Report its distance, direction, and coordinates      |
 | `/ai <task>`           | Give it a task in plain language (e.g. `/ai build a 3x3 platform`) |
 | `/ai name <name>`      | Rename it (nametag updates instantly)                    |
+| `/ai skin <name>`      | Give it a custom skin (see [Skins](#-custom-skins))      |
 | `/ai token <token>`    | Set your AI service API token                            |
 | `/ai listen on\|off`   | Turn chat listening on or off                            |
 | `/ai active on\|off`   | Turn proactive AI analysis of every message on or off    |
@@ -140,11 +146,11 @@ listening but turn off the proactive AI with `/ai active off`.
 
 ### The settings menu (a real screen)
 
-Press **K** in-game (rebindable under *Options → Controls → AI Assistant*) or
-run `/ai menu` to open a proper settings screen with:
+Run `/ai menu` (or **sneak + right-click** the assistant) to open a proper
+settings screen with:
 
 - **Toggles** — chat listening, active analysis, debug logging, allow commands
-- **Text fields** — assistant name, API token, API URL, model
+- **Text fields** — assistant name, API token, API URL, model, default skin
 - **Sliders** — temperature, max tokens, follow distance, guard radius,
   command permission level
 
@@ -256,6 +262,47 @@ improvising.
 
 ---
 
+## 🎨 Custom skins
+
+Give your assistant any look:
+
+```
+/ai skin robot           # a skin bundled with the mod (also: void)
+/ai skin default         # back to the vanilla Steve skin
+/ai skin minecraft:textures/entity/player/wide/steve.png   # any texture id
+/ai skin my_skin         # assets/ai-assistant/textures/entity/skins/my_skin.png
+```
+
+A skin name resolves in this order:
+
+1. `default` / `steve` (or empty) → the vanilla Steve skin.
+2. Contains a `:` → used directly as a `namespace:path` texture (great for skins
+   shipped in a **resource pack**).
+3. Otherwise → `ai-assistant:textures/entity/skins/<name>.png`.
+
+To add your own, drop a standard **64×64 player skin PNG** at
+`assets/ai-assistant/textures/entity/skins/<name>.png` (in the mod jar or a
+resource pack) and select it with `/ai skin <name>`. The skin is saved on the
+assistant and synced to everyone. Set the default for newly-summoned assistants
+with the **Default skin** field in `/ai menu`.
+
+---
+
+## 🕹️ Gamemodes (survival · adventure · creative)
+
+Everything works in all three gamemodes — the assistant is an entity, not a
+player, so its building, mining, fighting and commands aren't limited by
+adventure mode. Because you can't punch or place to interact in adventure (and
+might not want to in creative), it also responds to **direct clicks**:
+
+- **Right-click** the assistant → toggle **follow ↔ stay**.
+- **Sneak + right-click** → open the **settings menu**.
+
+(Summoning still uses `/ai summon`, so enable cheats in singleplayer or grant
+command access on a server.)
+
+---
+
 ## 🏗️ Building from source
 
 The mod is a standard **Fabric + Gradle (Loom)** project, so you don't need to
@@ -309,21 +356,25 @@ Loom generates ready-to-go run configurations — no separate install needed:
 | `./gradlew clean`        | Delete `build/` for a from-scratch rebuild               |
 | `./gradlew --refresh-dependencies build` | Rebuild and re-resolve dependencies     |
 
-> **JDK note:** if Gradle can't find Java 25, point it at your JDK by adding
-> `org.gradle.java.home=/path/to/jdk-25` to `gradle.properties`, or set a
-> `JAVA_HOME` that targets JDK 25.
+> **JDK note:** the project targets **Java 25**. If you don't have it installed,
+> Gradle will **auto-download** it (via the Foojay toolchain resolver configured
+> in `settings.gradle`), so `./gradlew build` works out of the box. To use your
+> own JDK instead, set `JAVA_HOME` to a JDK 25, or add
+> `org.gradle.java.installations.paths=/path/to/jdk-25` to your *user*
+> `~/.gradle/gradle.properties`.
 
 ### Project layout
 
 ```
 src/main/java        # common mod: entity, AI planner, commands, chat, networking
-src/client/java      # client-only: rendering, keybind, the settings GUI
-src/main/resources   # fabric.mod.json, lang files, assets
+src/client/java      # client-only: rendering and the settings GUI
+src/main/resources   # fabric.mod.json, lang files, skins, assets
 build.gradle         # Loom build script   ·   gradle.properties — versions
 ```
 
 Key versions live in [`gradle.properties`](gradle.properties) (Minecraft, Fabric
-Loader, Fabric API, Loom).
+Loader, Fabric API, Loom) and [`gradle/wrapper`](gradle/wrapper) (Gradle itself).
+CI builds the mod on every push (see [`.github/workflows`](.github/workflows)).
 
 ---
 

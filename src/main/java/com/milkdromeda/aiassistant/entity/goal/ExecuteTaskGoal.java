@@ -10,6 +10,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.permissions.PermissionSet;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.goal.Goal;
@@ -251,11 +252,17 @@ public class ExecuteTaskGoal extends Goal {
             entity.broadcastMessage("I won't run that one.");
             return true;
         }
-        MinecraftServer server = entity.getServer();
+        if (!(entity.level() instanceof ServerLevel sl)) return true;
+        MinecraftServer server = sl.getServer();
         if (server == null) return true;
         try {
-            CommandSourceStack source = entity.createCommandSourceStack()
-                    .withPermission(cfg.commandPermissionLevel)
+            // Level 0 = no privileged commands; 1+ = full access. The denylist above
+            // is the real guard, since this version uses capability-based permissions.
+            PermissionSet perms = cfg.commandPermissionLevel <= 0
+                    ? PermissionSet.NO_PERMISSIONS
+                    : PermissionSet.ALL_PERMISSIONS;
+            CommandSourceStack source = entity.createCommandSourceStackForNameResolution(sl)
+                    .withPermission(perms)
                     .withSuppressedOutput();
             server.getCommands().performPrefixedCommand(source, command);
         } catch (Exception e) {

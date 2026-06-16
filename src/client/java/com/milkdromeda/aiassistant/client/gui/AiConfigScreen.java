@@ -3,21 +3,20 @@ package com.milkdromeda.aiassistant.client.gui;
 import com.milkdromeda.aiassistant.network.ConfigData;
 import com.milkdromeda.aiassistant.network.ConfigUpdatePayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
  * A real settings menu for the AI assistant: toggles, text fields and sliders
- * laid out in two columns. Opened by the keybind (default <b>K</b>) or
- * {@code /ai menu}. Saving sends the values to the server, so it works in both
- * singleplayer and multiplayer.
+ * laid out in two columns. Opened with {@code /ai menu}. Saving sends the values
+ * to the server, so it works in both singleplayer and multiplayer.
+ *
+ * <p>Text is drawn with {@link StringWidget}s (added as render-only widgets)
+ * rather than immediate-mode draw calls, to suit the retained-mode GUI.
  */
 public class AiConfigScreen extends Screen {
 
@@ -25,10 +24,9 @@ public class AiConfigScreen extends Screen {
     private static final int COL_GAP = 20;
     private static final int FIELD_H = 20;
     private static final int ROW_H = 28;
-    private static final int TOP = 44;
+    private static final int TOP = 46;
 
     private final ConfigData initial;
-    private final List<Label> labels = new ArrayList<>();
 
     private CycleButton<Boolean> listenButton;
     private CycleButton<Boolean> activeButton;
@@ -37,14 +35,13 @@ public class AiConfigScreen extends Screen {
     private EditBox nameBox;
     private EditBox tokenBox;
     private EditBox apiUrlBox;
+    private EditBox skinBox;
     private EditBox modelBox;
     private OptionSlider temperatureSlider;
     private OptionSlider maxTokensSlider;
     private OptionSlider followSlider;
     private OptionSlider guardSlider;
     private OptionSlider commandLevelSlider;
-
-    private record Label(int x, int y, String text) {}
 
     public AiConfigScreen(ConfigData initial) {
         super(Component.literal("AI Assistant Settings"));
@@ -53,11 +50,11 @@ public class AiConfigScreen extends Screen {
 
     @Override
     protected void init() {
-        labels.clear();
-
         int totalW = COL_W * 2 + COL_GAP;
         int left = this.width / 2 - totalW / 2;
         int right = left + COL_W + COL_GAP;
+
+        addRenderableOnly(new StringWidget(0, 16, this.width, 12, this.title, this.font));
 
         // ── left column: behaviour toggles + free-text fields ──
         int ly = TOP;
@@ -89,6 +86,9 @@ public class AiConfigScreen extends Screen {
         ly += ROW_H;
 
         apiUrlBox = labeledBox(left, ly, "API URL", initial.apiUrl(), 256);
+        ly += ROW_H;
+
+        skinBox = labeledBox(left, ly, "Default skin", initial.defaultSkin(), 64);
         ly += ROW_H;
 
         // ── right column: model + numeric sliders ──
@@ -130,9 +130,9 @@ public class AiConfigScreen extends Screen {
                 .bounds(this.width / 2 + 5, by, bw, FIELD_H).build());
     }
 
-    /** Adds an EditBox with a small grey caption drawn just above it. */
+    /** Adds an EditBox with a small caption above it (as a render-only StringWidget). */
     private EditBox labeledBox(int x, int y, String label, String value, int maxLen) {
-        labels.add(new Label(x + 1, y - 9, label));
+        addRenderableOnly(new StringWidget(x, y - 11, COL_W, 10, Component.literal(label), this.font));
         EditBox box = new EditBox(this.font, x, y, COL_W, FIELD_H, Component.literal(label));
         box.setMaxLength(maxLen);
         if (value != null) box.setValue(value);
@@ -155,22 +155,10 @@ public class AiConfigScreen extends Screen {
                 followSlider.current(),
                 guardSlider.current(),
                 commandsButton.getValue(),
-                (int) Math.round(commandLevelSlider.current()));
+                (int) Math.round(commandLevelSlider.current()),
+                skinBox.getValue());
         ClientPlayNetworking.send(new ConfigUpdatePayload(data));
         onClose();
-    }
-
-    @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        this.renderBackground(graphics, mouseX, mouseY, delta);
-        super.render(graphics, mouseX, mouseY, delta);
-        graphics.drawCenteredString(this.font, this.title, this.width / 2, 18, 0xFFFFFF);
-        for (Label l : labels) {
-            graphics.drawString(this.font, l.text(), l.x(), l.y(), 0xA0A0A0);
-        }
-        graphics.drawCenteredString(this.font,
-                Component.literal("Esc or Cancel discards changes"),
-                this.width / 2, this.height - 16, 0x808080);
     }
 
     @Override

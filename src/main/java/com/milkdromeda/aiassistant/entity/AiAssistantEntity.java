@@ -5,12 +5,18 @@ import com.milkdromeda.aiassistant.ai.ChatIntent;
 import com.milkdromeda.aiassistant.config.ModConfig;
 import com.milkdromeda.aiassistant.entity.goal.*;
 import com.milkdromeda.aiassistant.entity.goal.FollowOwnerGoal;
+import com.milkdromeda.aiassistant.network.AiNetworking;
 import com.milkdromeda.aiassistant.util.Locator;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -33,6 +39,10 @@ public class AiAssistantEntity extends PathfinderMob {
         IDLE, FOLLOWING, BUILDING, FIGHTING, GUARDING, EXECUTING
     }
 
+    /** Skin id, synced to clients so the renderer can pick the right texture. */
+    private static final EntityDataAccessor<String> DATA_SKIN =
+            SynchedEntityData.defineId(AiAssistantEntity.class, EntityDataSerializers.STRING);
+
     private Mode mode = Mode.IDLE;
     private String assistantName = DEFAULT_NAME;
     private UUID ownerUuid;
@@ -50,6 +60,31 @@ public class AiAssistantEntity extends PathfinderMob {
         setAssistantName(this.assistantName);
         // A helper should never despawn when the player wanders off.
         setPersistenceRequired();
+    }
+
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        super.defineSynchedData(builder);
+        builder.define(DATA_SKIN, "default");
+    }
+
+    /**
+     * Right-click control so the assistant is usable hands-free in <b>adventure
+     * and creative</b> (where you can't punch/place to interact): tap to toggle
+     * follow/stay, sneak-tap to open the settings menu.
+     */
+    @Override
+    protected InteractionResult mobInteract(Player player, InteractionHand hand) {
+        if (!level().isClientSide() && player instanceof ServerPlayer sp) {
+            if (sp.isShiftKeyDown()) {
+                AiNetworking.openMenuFor(sp);
+            } else if (mode == Mode.FOLLOWING) {
+                stayHere();
+            } else {
+                followPlayer();
+            }
+        }
+        return InteractionResult.SUCCESS;
     }
 
     @Override
@@ -136,7 +171,7 @@ public class AiAssistantEntity extends PathfinderMob {
                 + "; distance to speaker: " + (int) Math.sqrt(distanceToSqr(sender)) + " blocks";
 
         taskManager.classify(message, context, getAssistantName()).whenComplete((intent, ex) -> {
-            MinecraftServer server = getServer();
+            MinecraftServer server = level().getServer();
             if (server == null) { analyzing = false; return; }
             server.execute(() -> {
                 analyzing = false;
@@ -231,6 +266,7 @@ public class AiAssistantEntity extends PathfinderMob {
     protected void addAdditionalSaveData(ValueOutput output) {
         super.addAdditionalSaveData(output);
         output.putString("AssistantName", assistantName);
+        output.putString("Skin", getSkin());
         output.putString("Mode", mode.name());
         if (ownerUuid != null) output.store("OwnerUuid", UUIDUtil.STRING_CODEC, ownerUuid);
         if (pendingTask != null) output.putString("PendingTask", pendingTask);
@@ -240,6 +276,7 @@ public class AiAssistantEntity extends PathfinderMob {
     protected void readAdditionalSaveData(ValueInput input) {
         super.readAdditionalSaveData(input);
         setAssistantName(input.getStringOr("AssistantName", DEFAULT_NAME));
+        setSkin(input.getStringOr("Skin", "default"));
         String modeStr = input.getStringOr("Mode", "FOLLOWING");
         try { mode = Mode.valueOf(modeStr); } catch (IllegalArgumentException ignored) { mode = Mode.FOLLOWING; }
         input.read("OwnerUuid", UUIDUtil.STRING_CODEC).ifPresent(uuid -> ownerUuid = uuid);
@@ -262,6 +299,14 @@ public class AiAssistantEntity extends PathfinderMob {
     public UUID getOwnerUuid() { return ownerUuid; }
     public void setOwnerUuid(UUID uuid) { this.ownerUuid = uuid; }
     public AiTaskManager getTaskManager() { return taskManager; }
+
+    /** Skin id: "default"/"steve", a "namespace:path.png" texture, or a name under
+     *  {@code assets/ai-assistant/textures/entity/skins/<name>.png}. */
+    public String getSkin() { return entityData.get(DATA_SKIN); }
+
+    public void setSkin(String skin) {
+        entityData.set(DATA_SKIN, (skin == null || skin.isBlank()) ? "default" : skin.trim());
+    }
 
     public boolean isOwnedBy(Player player) {
         return ownerUuid != null && ownerUuid.equals(player.getUUID());

@@ -47,6 +47,10 @@ public class ModConfig {
     public boolean activeMode = true;
     // Default name given to a freshly summoned assistant.
     public String defaultName = "Ethan";
+    // Default skin for a freshly summoned assistant: "default"/"steve", a
+    // "namespace:path.png" texture, or a name under
+    // assets/ai-assistant/textures/entity/skins/<name>.png.
+    public String defaultSkin = "default";
 
     public static ModConfig get() {
         if (instance == null) load();
