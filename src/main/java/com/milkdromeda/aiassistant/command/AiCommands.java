@@ -47,6 +47,9 @@ public class AiCommands {
                         .then(Commands.literal("locate").executes(AiCommands::locate))
                         .then(Commands.literal("where").executes(AiCommands::locate))
 
+                        .then(Commands.literal("inventory").executes(AiCommands::inventory))
+                        .then(Commands.literal("inv").executes(AiCommands::inventory))
+
                         .then(Commands.literal("name")
                                 .then(Commands.argument("name", StringArgumentType.greedyString())
                                         .executes(ctx -> rename(ctx, StringArgumentType.getString(ctx, "name")))))
@@ -150,6 +153,7 @@ public class AiCommands {
                 "§f/ai stay §7— hold position and keep watch\n" +
                 "§f/ai stop §7— cancel what it's doing\n" +
                 "§f/ai locate §7— find where it is\n" +
+                "§f/ai inventory §7— see what it's carrying and wearing\n" +
                 "§f/ai <task> §7— tell it what to do (e.g. /ai build a 5x5 floor)\n" +
                 "§f/ai name <name> §7— rename it\n" +
                 "§f/ai token <token> §7— set your AI service token\n" +
@@ -245,6 +249,15 @@ public class AiCommands {
             return 0;
         }
         player.sendSystemMessage(Component.literal("§b[" + ai.getAssistantName() + "] §f" + Locator.describe(player, ai)));
+        return 1;
+    }
+
+    private static int inventory(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer player = getPlayer(ctx);
+        if (player == null) return 0;
+        AiAssistantEntity ai = AiAssistantEntity.findFor(player, 128);
+        if (ai == null) return noAi(player);
+        player.sendSystemMessage(Component.literal(ai.describeInventory()));
         return 1;
     }
 

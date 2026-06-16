@@ -7,6 +7,7 @@ import com.milkdromeda.aiassistant.entity.goal.*;
 import com.milkdromeda.aiassistant.entity.goal.FollowOwnerGoal;
 import com.milkdromeda.aiassistant.network.AiNetworking;
 import com.milkdromeda.aiassistant.util.Locator;
+import net.minecraft.core.NonNullList;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -15,21 +16,29 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.ai.goal.*;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.AABB;
 
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.ToDoubleFunction;
 
 public class AiAssistantEntity extends PathfinderMob {
 
@@ -53,6 +62,14 @@ public class AiAssistantEntity extends PathfinderMob {
     /** True while an "active analysis" classification is in flight (prevents floods). */
     private boolean analyzing = false;
 
+    /** Backpack-style storage — 10 slots like a player's hotbar — on top of the
+     *  worn armour and held weapon. Picked-up loot lands here, and the best gear
+     *  it owns is auto-equipped from it so it can armour up and fight back. */
+    public static final int INVENTORY_SIZE = 10;
+    private final SimpleContainer inventory = new SimpleContainer(INVENTORY_SIZE);
+    private int equipReviewTimer = 0;
+    private int eatTimer = 0;
+
     public AiAssistantEntity(EntityType<? extends AiAssistantEntity> type, Level level) {
         super(type, level);
         this.taskManager = new AiTaskManager(this);
@@ -60,6 +77,8 @@ public class AiAssistantEntity extends PathfinderMob {
         setAssistantName(this.assistantName);
         // A helper should never despawn when the player wanders off.
         setPersistenceRequired();
+        // Let it scoop up loot it walks over — routed into our inventory below.
+        setCanPickUpLoot(true);
     }
 
     @Override
@@ -99,8 +118,10 @@ public class AiAssistantEntity extends PathfinderMob {
         goalSelector.addGoal(2, executeGoal);
         goalSelector.addGoal(3, buildGoal);
         goalSelector.addGoal(4, new FollowOwnerGoal(this, 1.0, ModConfig.get().followDistance, 64.0));
-        goalSelector.addGoal(5, new RandomLookAroundGoal(this));
-        goalSelector.addGoal(6, new WaterAvoidingRandomStrollGoal(this, 0.8));
+        // Scavenge nearby loot when not busy fighting, building, or following.
+        goalSelector.addGoal(5, new CollectItemsGoal(this));
+        goalSelector.addGoal(6, new RandomLookAroundGoal(this));
+        goalSelector.addGoal(7, new WaterAvoidingRandomStrollGoal(this, 0.8));
     }
 
     public static AttributeSupplier.Builder createAttributes() {
@@ -118,6 +139,10 @@ public class AiAssistantEntity extends PathfinderMob {
         if (level().isClientSide()) return;
 
         taskManager.tick();
+
+        if (level() instanceof ServerLevel serverLevel) {
+            manageGear(serverLevel);
+        }
 
         if (idleMessageTimer == 20 && mode == Mode.IDLE) {
             messageOwner("Ready! Say \"" + assistantName + ", follow me\" in chat, or use /ai help.");
@@ -260,6 +285,184 @@ public class AiAssistantEntity extends PathfinderMob {
         }
     }
 
+    // ---- Inventory & gear ----
+
+    public SimpleContainer getInventory() { return inventory; }
+
+    /** True if an item is worth grabbing: we have room for it, or it's an upgrade. */
+    public boolean canTake(ItemStack stack) {
+        return inventory.canAddItem(stack) || isEquipUpgrade(stack);
+    }
+
+    /** True if the item beats whatever is currently worn/held in its natural slot. */
+    private boolean isEquipUpgrade(ItemStack stack) {
+        if (ItemSorter.weaponScore(stack) > ItemSorter.weaponScore(getItemBySlot(EquipmentSlot.MAINHAND))) {
+            return true;
+        }
+        EquipmentSlot slot = ItemSorter.bestArmorSlot(stack);
+        return slot != null
+                && ItemSorter.armorScore(stack, slot) > ItemSorter.armorScore(getItemBySlot(slot), slot);
+    }
+
+    @Override
+    public boolean wantsToPickUp(ServerLevel level, ItemStack stack) {
+        return canTake(stack);
+    }
+
+    /** Routes everything the assistant walks over into its gear or backpack. */
+    @Override
+    protected void pickUpItem(ServerLevel level, ItemEntity itemEntity) {
+        ItemStack stack = itemEntity.getItem();
+        int before = stack.getCount();
+
+        equipIfUpgrade(level, stack);                  // wear/wield it now if it's better
+        ItemStack leftover = inventory.addItem(stack); // store the rest
+        optimizeEquipment(level);                      // re-sort using the whole backpack
+
+        if (before - leftover.getCount() > 0) {
+            onItemPickup(itemEntity);
+        }
+        if (leftover.isEmpty()) {
+            itemEntity.discard();
+        } else {
+            itemEntity.setItem(leftover);
+        }
+    }
+
+    /** If the stack is a straight upgrade for some slot, equip one and stash the old piece. */
+    private void equipIfUpgrade(ServerLevel level, ItemStack stack) {
+        if (stack.isEmpty()) return;
+        EquipmentSlot slot = null;
+        if (ItemSorter.weaponScore(stack) > ItemSorter.weaponScore(getItemBySlot(EquipmentSlot.MAINHAND))) {
+            slot = EquipmentSlot.MAINHAND;
+        } else {
+            EquipmentSlot armor = ItemSorter.bestArmorSlot(stack);
+            if (armor != null
+                    && ItemSorter.armorScore(stack, armor) > ItemSorter.armorScore(getItemBySlot(armor), armor)) {
+                slot = armor;
+            }
+        }
+        if (slot == null) return;
+        equip(level, slot, stack.copyWithCount(1));
+        stack.shrink(1);
+    }
+
+    /** Wears/wields the best gear it owns, swapping any displaced piece back into the backpack. */
+    public void optimizeEquipment(ServerLevel level) {
+        reslot(level, EquipmentSlot.MAINHAND, ItemSorter::weaponScore);
+        for (EquipmentSlot slot : ItemSorter.ARMOR_SLOTS) {
+            reslot(level, slot, s -> ItemSorter.armorScore(s, slot));
+        }
+    }
+
+    /** Finds the best backpack item for a slot and equips it if it beats what's there. */
+    private void reslot(ServerLevel level, EquipmentSlot slot, ToDoubleFunction<ItemStack> score) {
+        double bestScore = score.applyAsDouble(getItemBySlot(slot));
+        int bestIdx = -1;
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack s = inventory.getItem(i);
+            if (s.isEmpty()) continue;
+            double sc = score.applyAsDouble(s);
+            if (sc > 0 && sc > bestScore) { bestScore = sc; bestIdx = i; }
+        }
+        if (bestIdx < 0) return;
+        ItemStack chosen = inventory.getItem(bestIdx).copyWithCount(1);
+        inventory.removeItem(bestIdx, 1);
+        equip(level, slot, chosen);
+    }
+
+    /** Equips an item, guarantees it drops on death, and stashes whatever it replaced. */
+    private void equip(ServerLevel level, EquipmentSlot slot, ItemStack stack) {
+        ItemStack displaced = getItemBySlot(slot);
+        setItemSlot(slot, stack);
+        setGuaranteedDrop(slot);
+        broadcastMessage("Equipped " + stack.getDisplayName().getString() + ".");
+        if (!displaced.isEmpty()) {
+            ItemStack overflow = inventory.addItem(displaced);
+            if (!overflow.isEmpty()) spawnAtLocation(level, overflow);
+        }
+    }
+
+    /** Server-side upkeep: keep the best gear on, and snack from the backpack to heal when hurt. */
+    private void manageGear(ServerLevel level) {
+        if (--equipReviewTimer <= 0) {
+            equipReviewTimer = 40;
+            optimizeEquipment(level);
+        }
+        if (--eatTimer <= 0) {
+            eatTimer = 40;
+            eatToHealIfHurt();
+        }
+    }
+
+    /** Eats one food item to recover health when below 60%. */
+    private void eatToHealIfHurt() {
+        if (getHealth() >= getMaxHealth() * 0.6f) return;
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack s = inventory.getItem(i);
+            if (!ItemSorter.isFood(s)) continue;
+            heal(2.0f + ItemSorter.nutrition(s) * 0.5f);
+            inventory.removeItem(i, 1);
+            swing(InteractionHand.MAIN_HAND);
+            return;
+        }
+    }
+
+    private NonNullList<ItemStack> inventorySnapshot() {
+        NonNullList<ItemStack> list = NonNullList.withSize(inventory.getContainerSize(), ItemStack.EMPTY);
+        for (int i = 0; i < inventory.getContainerSize(); i++) list.set(i, inventory.getItem(i));
+        return list;
+    }
+
+    @Override
+    protected void dropCustomDeathLoot(ServerLevel level, DamageSource source, boolean recentlyHit) {
+        super.dropCustomDeathLoot(level, source, recentlyHit);   // worn gear (set to always drop)
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack s = inventory.getItem(i);
+            if (!s.isEmpty()) spawnAtLocation(level, s);
+        }
+        inventory.clearContent();
+    }
+
+    /** Human-readable summary of what the assistant is carrying, for {@code /ai inventory}. */
+    public String describeInventory() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("§6=== ").append(assistantName).append("'s gear ===\n");
+        sb.append("§eHeld: §f").append(slotName(EquipmentSlot.MAINHAND)).append("\n");
+        sb.append("§eArmor: §f")
+                .append(slotName(EquipmentSlot.HEAD)).append(", ")
+                .append(slotName(EquipmentSlot.CHEST)).append(", ")
+                .append(slotName(EquipmentSlot.LEGS)).append(", ")
+                .append(slotName(EquipmentSlot.FEET)).append("\n");
+
+        int used = 0;
+        EnumMap<ItemSorter.Category, List<String>> byCat = new EnumMap<>(ItemSorter.Category.class);
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack s = inventory.getItem(i);
+            if (s.isEmpty()) continue;
+            used++;
+            byCat.computeIfAbsent(ItemSorter.categorize(s), c -> new ArrayList<>())
+                    .add(s.getCount() + "× " + s.getDisplayName().getString());
+        }
+        sb.append("§eBackpack (§f").append(used).append("§e/§f").append(INVENTORY_SIZE).append("§e):");
+        if (used == 0) {
+            sb.append(" §7empty");
+        } else {
+            for (ItemSorter.Category cat : ItemSorter.Category.values()) {
+                List<String> items = byCat.get(cat);
+                if (items != null) {
+                    sb.append("\n  ").append(cat.label).append("§7: §f").append(String.join(", ", items));
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private String slotName(EquipmentSlot slot) {
+        ItemStack s = getItemBySlot(slot);
+        return s.isEmpty() ? "§7—§f" : s.getDisplayName().getString();
+    }
+
     // ---- NBT ----
 
     @Override
@@ -270,6 +473,7 @@ public class AiAssistantEntity extends PathfinderMob {
         output.putString("Mode", mode.name());
         if (ownerUuid != null) output.store("OwnerUuid", UUIDUtil.STRING_CODEC, ownerUuid);
         if (pendingTask != null) output.putString("PendingTask", pendingTask);
+        ContainerHelper.saveAllItems(output.child("Inventory"), inventorySnapshot());
     }
 
     @Override
@@ -281,6 +485,9 @@ public class AiAssistantEntity extends PathfinderMob {
         try { mode = Mode.valueOf(modeStr); } catch (IllegalArgumentException ignored) { mode = Mode.FOLLOWING; }
         input.read("OwnerUuid", UUIDUtil.STRING_CODEC).ifPresent(uuid -> ownerUuid = uuid);
         pendingTask = input.getString("PendingTask").orElse(null);
+        NonNullList<ItemStack> items = NonNullList.withSize(INVENTORY_SIZE, ItemStack.EMPTY);
+        ContainerHelper.loadAllItems(input.childOrEmpty("Inventory"), items);
+        for (int i = 0; i < INVENTORY_SIZE; i++) inventory.setItem(i, items.get(i));
     }
 
     // ---- Getters / Setters ----
