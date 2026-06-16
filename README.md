@@ -15,7 +15,7 @@ turn a sentence into a sequence of in-game actions.
 
 ## 📥 Download
 - Go [to here](https://github.com/MilkdromedaStudios/minecraft-ai-test/tree/main/builds) and find the latest versions of the mod to use.
-- I recommend you to read the while instructions and features to have it set-up properly, sorry for all the work required to set thsi bot up, but it's all worth it in the end. 
+- I recommend you to read all the instructions and features to have it set-up properly, sorry for all the work required to set this bot up, but it's all worth it in the end. 
 
 ---
 
@@ -389,7 +389,7 @@ CI builds the mod on every push (see [`.github/workflows`](.github/workflows)).
 ---
 
 ## ⚠️ Precautions
-This is now fully maintained my Claude Code, and it might not work. Working builds will be tagged when I get to test them. You can test any build yourself and pull a request to tag them as "working". 
+This is now fully maintained by Claude Code, and it might not work. Working builds will be tagged when I get to test them. You can test any build yourself and pull a request to tag them as "working". 
 
 ---
 
