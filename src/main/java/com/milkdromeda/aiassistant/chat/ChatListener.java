@@ -50,6 +50,7 @@ public final class ChatListener {
 
     public static void handle(ServerPlayer sender, String raw) {
         if (raw == null || raw.isBlank()) return;
+        if (com.milkdromeda.aiassistant.EmergencyState.isDisabled()) return;
         if (!ModConfig.get().chatListening) return;
 
         AiAssistantEntity ai = AiAssistantEntity.findFor(sender, 128);

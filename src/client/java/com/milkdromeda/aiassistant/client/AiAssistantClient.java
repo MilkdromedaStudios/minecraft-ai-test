@@ -26,7 +26,12 @@ public class AiAssistantClient implements ClientModInitializer {
 
         // Server sent us the current config (via /ai menu) — open the settings screen.
         ClientPlayNetworking.registerGlobalReceiver(ConfigSyncPayload.TYPE, (payload, context) ->
-                context.client().execute(() ->
-                        context.client().setScreen(new AiConfigScreen(payload.data()))));
+                context.client().execute(() -> {
+                    FpsGuardian.setPreset(payload.data().performancePreset());
+                    context.client().setScreen(new AiConfigScreen(payload.data()));
+                }));
+
+        // Extreme frame-rate watchdog: auto-disable the mod if FPS collapses.
+        FpsGuardian.register();
     }
 }

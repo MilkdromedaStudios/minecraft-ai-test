@@ -44,6 +44,9 @@ public class AiCommands {
 
                         .then(Commands.literal("stop").executes(AiCommands::stop))
 
+                        .then(Commands.literal("resume").executes(AiCommands::resume))
+                        .then(Commands.literal("enable").executes(AiCommands::resume))
+
                         .then(Commands.literal("locate").executes(AiCommands::locate))
                         .then(Commands.literal("where").executes(AiCommands::locate))
 
@@ -310,6 +313,19 @@ public class AiCommands {
         boolean on = ModConfig.get().chatListening;
         player.sendSystemMessage(Component.literal(
                 "§eChat listening is " + (on ? "§aON" : "§cOFF") + "§e. Use /ai listen on|off to change it."));
+        return 1;
+    }
+
+    private static int resume(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer player = getPlayer(ctx);
+        if (player == null) return 0;
+        if (!com.milkdromeda.aiassistant.EmergencyState.isDisabled()) {
+            player.sendSystemMessage(Component.literal("§eThe AI assistant is already active."));
+            return 1;
+        }
+        com.milkdromeda.aiassistant.EmergencyState.setDisabled(false);
+        player.sendSystemMessage(Component.literal(
+                "§a[AI] AI assistant re-enabled. §7It will auto-disable again if your frame-rate collapses."));
         return 1;
     }
 

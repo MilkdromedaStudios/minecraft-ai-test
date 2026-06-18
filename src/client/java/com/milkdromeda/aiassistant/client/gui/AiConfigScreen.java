@@ -6,33 +6,37 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.ScrollableLayout;
 import net.minecraft.client.gui.components.StringWidget;
+import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 /**
- * A real settings menu for the AI assistant: toggles, text fields and sliders
- * laid out in two columns. Opened with {@code /ai menu}. Saving sends the values
- * to the server, so it works in both singleplayer and multiplayer.
+ * A real settings menu for the AI assistant: text fields, toggles and sliders
+ * in a single scrollable column. Opened with {@code /ai menu}. Saving sends the
+ * values to the server, so it works in both singleplayer and multiplayer.
  *
- * <p>A collapsible <b>Developer Mode</b> section at the bottom exposes low-level
- * settings (action tick delay, task watchdog, flee threshold) that can cause lag
- * or crashes if misused. Each field shows a brief inline warning.
+ * <p>The body scrolls (mouse wheel + scrollbar) inside a {@link ScrollableLayout}
+ * so it always fits on screen, while the title and the Save / Apply / Cancel
+ * action bar stay pinned. A collapsible <b>Developer Mode</b> section exposes
+ * low-level settings that can cause lag or crashes if misused; each shows an
+ * inline warning.
  */
 public class AiConfigScreen extends Screen {
 
-    private static final int COL_W = 154;
-    private static final int COL_GAP = 14;
+    private static final int W = 240;           // content column width
     private static final int FIELD_H = 18;
-    private static final int ROW = 22;
-    private static final int BOX_ROW = 30;
-    private static final int TOP = 32;
+    private static final int LABEL_H = 9;
+    private static final int SPACING = 3;
+    private static final int HEADER = 22;
+    private static final int FOOTER = 28;
     private static final Component SAVED_MSG =
             Component.literal("Settings applied ✓").withStyle(s -> s.withColor(0x55FF55));
 
     private final ConfigData initial;
 
-    // Standard widgets
+    // Widgets
     private CycleButton<Boolean> listenButton;
     private CycleButton<Boolean> activeButton;
     private CycleButton<Boolean> debugButton;
@@ -54,13 +58,10 @@ public class AiConfigScreen extends Screen {
     private OptionSlider maxTaskSecondsSlider;
     private OptionSlider fleeHealthSlider;
 
-    /** Whether the developer section is currently expanded. Survives rebuilds. */
+    /** Whether the developer section is expanded. Survives rebuilds. */
     private boolean devMode = false;
 
-    /**
-     * Dev-field values tracked independently from the sliders so a preset can set
-     * them even when the developer section is collapsed (sliders are null).
-     */
+    /** Dev-field values tracked independently so presets can set them while hidden. */
     private int pendingActionTickDelay;
     private int pendingMaxTaskSeconds;
     private double pendingFleeHealth;
@@ -68,7 +69,6 @@ public class AiConfigScreen extends Screen {
     private ConfigData baseline;
     private boolean tokenSet;
     private boolean saveOnClose = true;
-    private int actionBarY;
     private StringWidget appliedLabel;
     private long appliedFeedbackUntil;
 
@@ -83,112 +83,82 @@ public class AiConfigScreen extends Screen {
 
     @Override
     protected void init() {
-        int totalW = COL_W * 2 + COL_GAP;
-        int left = this.width / 2 - totalW / 2;
-        int right = left + COL_W + COL_GAP;
+        // -- pinned title --
+        addRenderableWidget(new StringWidget(0, 6, this.width, 12, this.title, this.font));
 
-        addRenderableOnly(new StringWidget(0, 6, this.width, 12, this.title, this.font));
+        // -- scrollable body (single column) --
+        LinearLayout body = LinearLayout.vertical().spacing(SPACING);
 
-        // -- left column: identity & connection --
-        int ly = TOP;
-        nameBox = labeledBox(left, ly, "Assistant name", initial.defaultName(), 32);
-        ly += BOX_ROW;
-        skinBox = labeledBox(left, ly, "Default skin", initial.defaultSkin(), 64);
-        ly += BOX_ROW;
-        modelBox = labeledBox(left, ly, "Model", initial.model(), 128);
-        ly += BOX_ROW;
-        apiUrlBox = labeledBox(left, ly, "API URL", initial.apiUrl(), 256);
-        ly += BOX_ROW;
-        tokenBox = labeledBox(left, ly, "API token", "", 256);
+        nameBox = bodyBox(body, "Assistant name", initial.defaultName(), 32);
+        skinBox = bodyBox(body, "Default skin", initial.defaultSkin(), 64);
+        modelBox = bodyBox(body, "Model", initial.model(), 128);
+        apiUrlBox = bodyBox(body, "API URL", initial.apiUrl(), 256);
+        tokenBox = bodyBox(body, "API token", "", 256);
         tokenBox.setHint(Component.literal(initial.tokenSet() ? "set - blank keeps it" : "not set"));
-        ly += BOX_ROW;
-        debugButton = addToggle(left, ly, "Debug logging", initial.debugLogging());
-        ly += ROW;
 
-        // -- right column: behaviour toggles + sliders --
-        int ry = TOP;
-
-        // Performance preset selector
         String currentPreset = initial.performancePreset() != null ? initial.performancePreset() : "normal";
-        presetButton = CycleButton.<String>builder(s -> Component.literal(presetLabel(s)), currentPreset)
+        presetButton = body.addChild(CycleButton.<String>builder(s -> Component.literal(presetLabel(s)), currentPreset)
                 .withValues("normal", "opus", "potato")
-                .create(right, ry, COL_W, FIELD_H, Component.literal("Preset"),
-                        (btn, val) -> applyPreset(val));
-        addRenderableWidget(presetButton);
-        ry += ROW;
+                .create(0, 0, W, FIELD_H, Component.literal("Preset"),
+                        (btn, val) -> applyPreset(val)));
 
-        listenButton = addToggle(right, ry, "Chat listening", initial.chatListening());
-        ry += ROW;
-        activeButton = addToggle(right, ry, "Active analysis", initial.activeMode());
-        ry += ROW;
-        commandsButton = addToggle(right, ry, "Allow commands", initial.allowCommands());
-        ry += ROW;
-        temperatureSlider = addSlider(right, ry, "Temperature", 0.0, 2.0, initial.temperature(), false);
-        ry += ROW;
-        maxTokensSlider = addSlider(right, ry, "Max tokens", 32, 2048, initial.maxTokens(), true);
-        ry += ROW;
-        followSlider = addSlider(right, ry, "Follow distance", 1, 32, initial.followDistance(), false);
-        ry += ROW;
-        guardSlider = addSlider(right, ry, "Guard radius", 4, 64, initial.guardRadius(), false);
-        ry += ROW;
-        commandLevelSlider = addSlider(right, ry, "Command perm level", 0, 4, initial.commandPermissionLevel(), true);
-        ry += ROW;
+        listenButton = bodyToggle(body, "Chat listening", initial.chatListening());
+        activeButton = bodyToggle(body, "Active analysis", initial.activeMode());
+        commandsButton = bodyToggle(body, "Allow commands", initial.allowCommands());
+        debugButton = bodyToggle(body, "Debug logging", initial.debugLogging());
 
-        int contentBottom = Math.max(ly, ry) + 4;
+        temperatureSlider = bodySlider(body, "Temperature", 0.0, 2.0, initial.temperature(), false);
+        maxTokensSlider = bodySlider(body, "Max tokens", 32, 2048, initial.maxTokens(), true);
+        followSlider = bodySlider(body, "Follow distance", 1, 32, initial.followDistance(), false);
+        guardSlider = bodySlider(body, "Guard radius", 4, 64, initial.guardRadius(), false);
+        commandLevelSlider = bodySlider(body, "Command perm level", 0, 4, initial.commandPermissionLevel(), true);
 
-        // -- developer mode toggle --
-        int devToggleY = contentBottom + 6;
-        addRenderableWidget(Button.builder(
+        // -- developer mode --
+        body.addChild(Button.builder(
                         Component.literal(devMode ? "▼ Developer Mode  [ON]" : "► Developer Mode  [OFF]"),
                         b -> { devMode = !devMode; rebuildWidgets(); })
-                .bounds(left, devToggleY, totalW, FIELD_H)
-                .build());
-
-        int devSectionBottom = devToggleY + ROW;
+                .bounds(0, 0, W, FIELD_H).build());
 
         if (devMode) {
-            int dw = (totalW - COL_GAP) / 2;
-            int dl = left;
-            int dr = left + dw + COL_GAP;
-            int dy = devToggleY + ROW;
-
-            addRenderableOnly(new StringWidget(left, dy, totalW, 9,
-                    Component.literal("⚠  These settings can cause lag or crash the game. See developer.md.")
+            body.addChild(new StringWidget(W, LABEL_H,
+                    Component.literal("⚠  These can cause lag or crash the game. See developer.md.")
                             .withStyle(s -> s.withColor(0xFF5555)),
                     this.font));
-            dy += 12;
-
-            actionTickDelaySlider = addSlider(dl, dy, "Action tick delay (0=every tick!)", 0, 40,
-                    pendingActionTickDelay, true, dw);
-            maxTaskSecondsSlider = addSlider(dr, dy, "Task watchdog sec (0=disabled!)", 0, 600,
-                    pendingMaxTaskSeconds, true, dw);
-            dy += ROW;
-            fleeHealthSlider = addSlider(dl, dy, "Flee health % (0=never flees!)", 0.0, 1.0,
-                    pendingFleeHealth, false, dw);
-            dy += ROW;
-
-            devSectionBottom = dy;
+            actionTickDelaySlider = bodySlider(body, "Action tick delay (0=every tick!)", 0, 40,
+                    pendingActionTickDelay, true);
+            maxTaskSecondsSlider = bodySlider(body, "Task watchdog sec (0=disabled!)", 0, 600,
+                    pendingMaxTaskSeconds, true);
+            fleeHealthSlider = bodySlider(body, "Flee health % (0=never flees!)", 0.0, 1.0,
+                    pendingFleeHealth, false);
         } else {
             actionTickDelaySlider = null;
             maxTaskSecondsSlider = null;
             fleeHealthSlider = null;
         }
 
-        // -- action bar --
-        actionBarY = Math.min(devSectionBottom + 8, this.height - FIELD_H - 8);
+        int maxHeight = Math.max(FIELD_H, this.height - HEADER - FOOTER);
+        ScrollableLayout scroll = new ScrollableLayout(this.minecraft, body, maxHeight);
+        scroll.setMinWidth(W + 12);
+        scroll.arrangeElements();
+        scroll.setX(this.width / 2 - (W + 12) / 2);
+        scroll.setY(HEADER);
+        scroll.visitWidgets(this::addRenderableWidget);
+
+        // -- pinned action bar --
         int bw = 100;
         int gap = 8;
         int barW = bw * 3 + gap * 2;
         int bx = this.width / 2 - barW / 2;
+        int by = this.height - FIELD_H - 6;
         addRenderableWidget(Button.builder(Component.literal("Save"), b -> saveAndClose())
-                .bounds(bx, actionBarY, bw, FIELD_H).build());
+                .bounds(bx, by, bw, FIELD_H).build());
         addRenderableWidget(Button.builder(Component.literal("Apply"), b -> apply())
-                .bounds(bx + bw + gap, actionBarY, bw, FIELD_H).build());
+                .bounds(bx + bw + gap, by, bw, FIELD_H).build());
         addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> cancel())
-                .bounds(bx + (bw + gap) * 2, actionBarY, bw, FIELD_H).build());
+                .bounds(bx + (bw + gap) * 2, by, bw, FIELD_H).build());
 
-        appliedLabel = new StringWidget(0, actionBarY - 12, this.width, 9, Component.empty(), this.font);
-        addRenderableOnly(appliedLabel);
+        appliedLabel = new StringWidget(0, by - 12, this.width, LABEL_H, Component.empty(), this.font);
+        addRenderableWidget(appliedLabel);
 
         baseline = buildData();
     }
@@ -203,10 +173,6 @@ public class AiConfigScreen extends Screen {
         };
     }
 
-    /**
-     * Applies a named preset to all relevant visible widgets and stores the
-     * dev-field values so they survive with the sliders hidden.
-     */
     private void applyPreset(String preset) {
         switch (preset) {
             case "opus" -> {
@@ -237,46 +203,34 @@ public class AiConfigScreen extends Screen {
                 pendingFleeHealth = 0.25;
             }
         }
-        // If dev sliders are open, update them too so they stay in sync
         if (actionTickDelaySlider != null) actionTickDelaySlider.setCurrent(pendingActionTickDelay);
         if (maxTaskSecondsSlider != null)  maxTaskSecondsSlider.setCurrent(pendingMaxTaskSeconds);
         if (fleeHealthSlider != null)      fleeHealthSlider.setCurrent(pendingFleeHealth);
     }
 
-    // -- widget factories --
+    // -- body widget factories --
 
-    private EditBox labeledBox(int x, int y, String label, String value, int maxLen) {
-        addRenderableOnly(new StringWidget(x, y - 10, COL_W, 9, Component.literal(label), this.font));
-        EditBox box = new EditBox(this.font, x, y, COL_W, FIELD_H, Component.literal(label));
+    private EditBox bodyBox(LinearLayout body, String label, String value, int maxLen) {
+        body.addChild(new StringWidget(W, LABEL_H, Component.literal(label), this.font));
+        EditBox box = new EditBox(this.font, 0, 0, W, FIELD_H, Component.literal(label));
         box.setMaxLength(maxLen);
         if (value != null) box.setValue(value);
-        addRenderableWidget(box);
-        return box;
+        return body.addChild(box);
     }
 
-    private CycleButton<Boolean> addToggle(int x, int y, String label, boolean value) {
-        CycleButton<Boolean> button = CycleButton.onOffBuilder(value)
-                .create(x, y, COL_W, FIELD_H, Component.literal(label));
-        addRenderableWidget(button);
-        return button;
+    private CycleButton<Boolean> bodyToggle(LinearLayout body, String label, boolean value) {
+        return body.addChild(CycleButton.onOffBuilder(value)
+                .create(0, 0, W, FIELD_H, Component.literal(label)));
     }
 
-    private OptionSlider addSlider(int x, int y, String label, double min, double max,
-                                   double value, boolean integer) {
-        return addSlider(x, y, label, min, max, value, integer, COL_W);
-    }
-
-    private OptionSlider addSlider(int x, int y, String label, double min, double max,
-                                   double value, boolean integer, int width) {
-        OptionSlider slider = new OptionSlider(x, y, width, FIELD_H, label, min, max, value, integer);
-        addRenderableWidget(slider);
-        return slider;
+    private OptionSlider bodySlider(LinearLayout body, String label, double min, double max,
+                                    double value, boolean integer) {
+        return body.addChild(new OptionSlider(0, 0, W, FIELD_H, label, min, max, value, integer));
     }
 
     // -- data --
 
     private ConfigData buildData() {
-        // Flush dev-slider values back to pending fields so rebuildWidgets keeps them
         if (actionTickDelaySlider != null) pendingActionTickDelay = (int) Math.round(actionTickDelaySlider.current());
         if (maxTaskSecondsSlider  != null) pendingMaxTaskSeconds  = (int) Math.round(maxTaskSecondsSlider.current());
         if (fleeHealthSlider      != null) pendingFleeHealth      = fleeHealthSlider.current();

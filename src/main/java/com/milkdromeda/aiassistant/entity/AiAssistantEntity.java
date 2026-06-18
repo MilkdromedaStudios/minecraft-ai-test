@@ -157,6 +157,17 @@ public class AiAssistantEntity extends PathfinderMob {
         super.tick();
         if (level().isClientSide()) return;
 
+        // Emergency kill switch: the entity stays in the world but does nothing —
+        // no planning, no task execution, no gear management, no chat analysis.
+        if (com.milkdromeda.aiassistant.EmergencyState.isDisabled()) {
+            if (mode == Mode.EXECUTING) {
+                taskManager.clearPlan();
+                pendingTask = null;
+                mode = Mode.IDLE;
+            }
+            return;
+        }
+
         taskManager.tick();
 
         if (level() instanceof ServerLevel serverLevel) {

@@ -69,6 +69,7 @@ can do and how it evolved.
 | `/ai follow` | Follow player |
 | `/ai stay` | Guard position |
 | `/ai stop` | Cancel current task |
+| `/ai resume` / `/ai enable` | Re-enable after the FPS kill switch tripped |
 | `/ai locate` / `/ai where` | Find assistant |
 | `/ai name <name>` | Rename |
 | `/ai skin <name>` | Change skin |
@@ -93,6 +94,15 @@ can do and how it evolved.
   plans automatically and reverts the entity to FOLLOWING mode.
 - Configurable via `/ai settings max_task_seconds <seconds>`.
 
+### Emergency FPS kill switch
+- A client-side **frame-rate watchdog** ("extreme" watchdog) samples FPS every
+  tick; if it stays below a preset-dependent floor (Potato 3, Normal 4, Opus 5)
+  for ~3 s straight, it trips a mod-wide kill switch on the server.
+- While tripped, the assistant entity stays in the world but does **nothing** —
+  no planning, task execution, gear management, or chat analysis.
+- All players are notified; re-enable with `/ai resume` (or `/ai enable`) once
+  the frame-rate recovers. The watchdog re-arms automatically after recovery.
+
 ### Combat & survival
 - Six modes: IDLE, FOLLOWING, BUILDING, FIGHTING, GUARDING, EXECUTING.
 - `SurvivalReflexGoal` (top priority) — always scans for threats, retaliates,
@@ -115,6 +125,8 @@ can do and how it evolved.
 - Two-column layout: identity fields on the left, toggles and sliders on the
   right; everything fits on one screen.
 - **Save / Apply / Cancel** action bar pinned at the bottom; ESC auto-saves.
+- **Scrollable body** — settings live in a `ScrollableLayout` (mouse wheel +
+  scrollbar) so everything fits on any screen size; title and action bar stay pinned.
 - Changes sync to the server via `ConfigUpdatePayload`.
 - **Developer Mode** — collapsible section at the bottom exposes low-level
   settings (`actionTickDelay`, `maxTaskSeconds`, `fleeHealthPercent`) with
@@ -133,6 +145,18 @@ can do and how it evolved.
 ---
 
 ## Changelog
+
+### 2.11.0
+- **Scrollable settings menu** — the `/ai menu` body is now a single scrollable
+  column (`ScrollableLayout`, mouse wheel + scrollbar) so it fits on any screen
+  size, even with Developer Mode expanded. Title and Save/Apply/Cancel bar stay
+  pinned. (The 26.x render-state architecture replaced manual `render()`; the
+  engine's `ScrollableLayout` is the supported way to clip/scroll content.)
+- **Emergency FPS kill switch** — a client-side frame-rate watchdog auto-disables
+  the whole mod when FPS collapses below a preset-dependent floor (Potato 3,
+  Normal 4, Opus 5) for ~3 s. The assistant entity stays in the world but does
+  nothing until `/ai resume`. New `EmergencyState` flag, `EmergencyDisablePayload`
+  packet, `FpsGuardian` client watchdog, and `/ai resume` / `/ai enable` commands.
 
 ### 2.10.0
 - **Performance presets** — new cycle button in `/ai menu` lets you pick
