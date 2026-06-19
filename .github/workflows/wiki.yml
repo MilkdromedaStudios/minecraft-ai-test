@@ -1,16 +1,11 @@
 name: Publish Wiki
 
-# Publishes the contents of the wiki/ folder to the repository's GitHub Wiki
-# whenever wiki sources change on main. The wiki must be enabled and have at
-# least one page created (a one-time step) before the first run — see wiki/README.md.
-
 on:
   push:
-    branches: [main]
-    paths:
-      - 'wiki/**'
-      - '.github/workflows/wiki.yml'
-  workflow_dispatch:
+    branches: [main] # Runs automatically every single time you push code to main
+  schedule:
+    - cron: '0 * * * *' # Runs automatically every hour as a backup sync
+  workflow_dispatch: # Keeps the manual run button just in case
 
 permissions:
   contents: write
@@ -31,4 +26,3 @@ jobs:
         with:
           path: wiki/
           token: ${{ secrets.GITHUB_TOKEN }}
-</content>
