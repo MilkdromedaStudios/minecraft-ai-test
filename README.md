@@ -9,6 +9,7 @@
 [![Fabric](https://img.shields.io/badge/Fabric_Loader-0.19.3+-dbb74b?style=for-the-badge)](https://fabricmc.net/)
 [![Java](https://img.shields.io/badge/Java-25+-e76f51?style=for-the-badge)](https://adoptium.net/)
 [![License](https://img.shields.io/badge/License-MIT-264653?style=for-the-badge)](LICENSE)
+[![GitHub](https://img.shields.io/badge/github-%23121011.svg?style=for-the-badge&logo=github&logoColor=white)](https://github.com/MilkdromedaStudios/Blockpal-AI)
 
 *Drop a friendly AI character named **Ethan** into your world. It reads your chat,
 plans tasks through an LLM, fights back on reflex, and configures itself from a
