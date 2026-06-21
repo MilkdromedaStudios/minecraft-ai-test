@@ -1,5 +1,6 @@
 package com.milkdromeda.blockpal.client;
 
+import com.milkdromeda.blockpal.network.ClientStatsPayload;
 import com.milkdromeda.blockpal.network.EmergencyDisablePayload;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -33,6 +34,8 @@ public final class FpsGuardian {
     private static int lowTicks = 0;
     /** True once we've sent a disable request; latched until FPS recovers well. */
     private static boolean tripped = false;
+    /** Counts client ticks so we report FPS to the server about once a second. */
+    private static int reportTimer = 0;
 
     /** Updates the preset used to choose the FPS floor (from a config sync packet). */
     public static void setPreset(String value) {
@@ -64,6 +67,14 @@ public final class FpsGuardian {
         if (fps <= 0) {
             lowTicks = 0;
             return;
+        }
+
+        // Report FPS to the server roughly once a second for the admin menu.
+        if (++reportTimer >= 20) {
+            reportTimer = 0;
+            if (ClientPlayNetworking.canSend(ClientStatsPayload.TYPE)) {
+                ClientPlayNetworking.send(new ClientStatsPayload(fps));
+            }
         }
 
         int floor = fpsFloor();

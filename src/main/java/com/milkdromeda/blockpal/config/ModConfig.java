@@ -5,9 +5,11 @@ import com.google.gson.GsonBuilder;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Base64;
 
 public class ModConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -18,7 +20,7 @@ public class ModConfig {
      * default instead of silently inheriting Java's zero/false. A file with no
      * version at all reads back as {@code 0} and is migrated from there.
      */
-    public static final int CURRENT_CONFIG_VERSION = 1;
+    public static final int CURRENT_CONFIG_VERSION = 2;
 
     // Settings (including the API key) live in their own folder under the game's
     // config directory. That directory is untouched when you replace the mod jar,
@@ -30,9 +32,22 @@ public class ModConfig {
     private static final Path LEGACY_PATH = FabricLoader.getInstance()
             .getConfigDir().resolve("blockpal.json");
 
+    // Reversible obfuscation key for the token at rest. This is deliberately a
+    // light, in-jar XOR — it stops the key being read at a glance, accidentally
+    // pasted from config.json, or caught in a screenshot. It is NOT encryption
+    // (the jar is decompilable): for real protection set BLOCKPAL_API_TOKEN as an
+    // environment variable so the secret never touches disk. See wiki/Security.md.
+    private static final byte[] OBF_KEY =
+            "blockpal:token-obfuscation/v1".getBytes(StandardCharsets.UTF_8);
+
     private static ModConfig instance;
 
+    // The live, in-memory token. It is never written to disk as plaintext: save()
+    // persists only the obfuscated form (hfTokenObf), and an env-provided token is
+    // never persisted at all. Kept non-transient so legacy plaintext files still load.
     public String hfToken = "";
+    // Obfuscated token as stored on disk (see OBF_KEY). Players don't edit this.
+    public String hfTokenObf = "";
     public String hfModel = "mistralai/Mistral-7B-Instruct-v0.2";
     // Modern HuggingFace router endpoint (OpenAI-compatible chat completions).
     // The old api-inference.huggingface.co endpoint is deprecated and causes
@@ -84,9 +99,24 @@ public class ModConfig {
     // menu is always reachable with /ai menu regardless of this setting.
     public boolean sneakToOpenMenu = true;
 
+    // Minimum permission level a player needs to use the admin menu / global
+    // controls and to CHANGE any server-wide setting (token, API URL, model,
+    // command perms, etc.). Vanilla tiers: 0 = everyone, 2 = ops (command-block
+    // tier, the default), 4 = full operator / single-player world owner.
+    public int adminPermissionLevel = 2;
+
+    // Hard cap on how many Blockpal entities may exist on the server at once.
+    // /ai summon refuses past this. 0 = unlimited. Owner-controlled anti-grief /
+    // anti-lag knob; change with /ai admin maxbots <n> or the admin menu.
+    public int maxBotsPerServer = 8;
+
     // Schema version this file was written with — see CURRENT_CONFIG_VERSION.
     // Used only for migration; players don't need to touch it.
     public int configVersion = CURRENT_CONFIG_VERSION;
+
+    // Runtime-only: true when the live token came from the BLOCKPAL_API_TOKEN env
+    // var / -Dblockpal.apiToken property. Such a token is used but never persisted.
+    private transient boolean tokenFromEnv = false;
 
     public static ModConfig get() {
         if (instance == null) load();
@@ -102,31 +132,41 @@ public class ModConfig {
                 ModConfig loaded = GSON.fromJson(r, ModConfig.class);
                 if (loaded != null) {
                     instance = loaded;
+                    instance.deobfuscateToken();   // hfTokenObf -> live hfToken (must run before save)
                     instance.migrate();
                     instance.normalize();
-                    save();   // (re)write into the folder, migrating the legacy file across
+                    instance.applyEnvToken();      // env/property override (never persisted)
+                    save();   // (re)write into the folder, persisting the token obfuscated
                     return;
                 }
             } catch (Exception e) {
                 // Don't lose a recoverable key: keep the bad file as .bak, then fall
                 // back to defaults rather than failing to start.
                 backup(source);
-                System.err.println("[AI-Assistant] Couldn't read config (" + e.getMessage()
+                System.err.println("[Blockpal] Couldn't read config (" + e.getMessage()
                         + "); starting from defaults. Previous file kept as .bak");
             }
         }
         instance = new ModConfig();
+        instance.applyEnvToken();
         save();
     }
 
     public static void save() {
         try {
             Files.createDirectories(CONFIG_DIR);
+            // Persist the token only in obfuscated form, and never an env-provided
+            // one. Swap the live plaintext out for the write, then restore it.
+            String plain = instance.hfToken == null ? "" : instance.hfToken;
+            instance.hfTokenObf = obfuscate(instance.tokenFromEnv ? "" : plain);
+            instance.hfToken = "";
             try (Writer w = Files.newBufferedWriter(CONFIG_PATH)) {
                 GSON.toJson(instance, w);
+            } finally {
+                instance.hfToken = plain;
             }
         } catch (IOException e) {
-            System.err.println("[AI-Assistant] Failed to save config: " + e.getMessage());
+            System.err.println("[Blockpal] Failed to save config: " + e.getMessage());
         }
     }
 
@@ -141,18 +181,49 @@ public class ModConfig {
             // sneakToOpenMenu was added in v1; older files default it to true.
             sneakToOpenMenu = true;
         }
+        if (configVersion < 2) {
+            // adminPermissionLevel / maxBotsPerServer were added in v2. Default an
+            // upgrading install to ops-only admin (2) and an 8-bot cap rather than
+            // the dangerous 0 (= everyone is admin / unlimited bots).
+            adminPermissionLevel = 2;
+            maxBotsPerServer = 8;
+            // Any legacy plaintext token in hfToken is preserved here and gets
+            // obfuscated on the save() that follows load().
+        }
         configVersion = CURRENT_CONFIG_VERSION;
     }
 
     /** Fills in sensible defaults for any field that came back null/blank/invalid. */
     private void normalize() {
         if (hfToken == null) hfToken = "";
+        if (hfTokenObf == null) hfTokenObf = "";
         if (hfModel == null || hfModel.isBlank()) hfModel = "mistralai/Mistral-7B-Instruct-v0.2";
         if (apiUrl == null || apiUrl.isBlank()) apiUrl = "https://router.huggingface.co/v1/chat/completions";
         if (defaultName == null || defaultName.isBlank()) defaultName = "Ethan";
         if (defaultSkin == null || defaultSkin.isBlank()) defaultSkin = "default";
         if (maxTaskSeconds < 0) maxTaskSeconds = 0;
         if (performancePreset == null || performancePreset.isBlank()) performancePreset = "normal";
+        if (adminPermissionLevel < 0) adminPermissionLevel = 0;
+        if (adminPermissionLevel > 4) adminPermissionLevel = 4;
+        if (maxBotsPerServer < 0) maxBotsPerServer = 0;
+    }
+
+    /** Recovers the live token from its obfuscated on-disk form (if needed). */
+    private void deobfuscateToken() {
+        if (hfToken == null) hfToken = "";
+        if (hfToken.isBlank() && hfTokenObf != null && !hfTokenObf.isBlank()) {
+            hfToken = deobfuscate(hfTokenObf);
+        }
+    }
+
+    /** Lets server owners keep the key out of the config file entirely. */
+    private void applyEnvToken() {
+        String env = System.getProperty("blockpal.apiToken");
+        if (env == null || env.isBlank()) env = System.getenv("BLOCKPAL_API_TOKEN");
+        if (env != null && !env.isBlank()) {
+            hfToken = env.trim();
+            tokenFromEnv = true;
+        }
     }
 
     private static void backup(Path source) {
@@ -164,5 +235,40 @@ public class ModConfig {
 
     public boolean hasApiToken() {
         return hfToken != null && !hfToken.isBlank();
+    }
+
+    /** True when the active token came from the environment (never persisted). */
+    public boolean isTokenFromEnv() {
+        return tokenFromEnv;
+    }
+
+    /** Sets the API token and marks it as a persisted (non-env) value. */
+    public void setToken(String token) {
+        hfToken = token == null ? "" : token.trim();
+        tokenFromEnv = false;
+    }
+
+    // ---- token at-rest obfuscation (NOT encryption — see OBF_KEY note) ----
+
+    static String obfuscate(String s) {
+        if (s == null || s.isEmpty()) return "";
+        return Base64.getEncoder().encodeToString(xor(s.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    static String deobfuscate(String s) {
+        if (s == null || s.isEmpty()) return "";
+        try {
+            return new String(xor(Base64.getDecoder().decode(s)), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";   // corrupt/garbage → treat as "no token" rather than crash
+        }
+    }
+
+    private static byte[] xor(byte[] data) {
+        byte[] out = new byte[data.length];
+        for (int i = 0; i < data.length; i++) {
+            out[i] = (byte) (data[i] ^ OBF_KEY[i % OBF_KEY.length]);
+        }
+        return out;
     }
 }

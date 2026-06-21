@@ -14,6 +14,11 @@
 - [Running Commands](Running-Commands)
 - [AI Actions](AI-Actions)
 
+**Admin & safety**
+- [Admin Menu](Admin-Menu)
+- [Security](Security)
+- [Terms & Policy](Terms-and-Policy)
+
 **Reference**
 - [Developer Menu](Developer-Menu)
 - [More Info](More-Info)

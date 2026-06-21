@@ -1,11 +1,16 @@
 package com.milkdromeda.blockpal.command;
 
 import com.milkdromeda.blockpal.ModEntities;
+import com.milkdromeda.blockpal.admin.AdminAccess;
 import com.milkdromeda.blockpal.config.ModConfig;
 import com.milkdromeda.blockpal.entity.AiAssistantEntity;
+import com.milkdromeda.blockpal.network.AdminStatsData;
+import com.milkdromeda.blockpal.network.AdminSyncPayload;
+import com.milkdromeda.blockpal.network.AiNetworking;
 import com.milkdromeda.blockpal.network.ConfigData;
 import com.milkdromeda.blockpal.network.ConfigSyncPayload;
 import com.milkdromeda.blockpal.util.Locator;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -13,6 +18,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntitySpawnReason;
@@ -95,6 +101,25 @@ public class AiCommands {
                                                         StringArgumentType.getString(ctx, "key"),
                                                         StringArgumentType.getString(ctx, "value"))))))
 
+                        // ── /ai admin — global controls, ops only ────────────────────
+                        // The whole subtree is hidden from (and refused to) anyone
+                        // below the configured admin permission level.
+                        .then(Commands.literal("admin")
+                                .requires(AdminAccess::isAdmin)
+                                .executes(AiCommands::adminHelp)
+                                .then(Commands.literal("help").executes(AiCommands::adminHelp))
+                                .then(Commands.literal("menu").executes(AiCommands::adminMenu))
+                                .then(Commands.literal("stats").executes(AiCommands::adminStats))
+                                .then(Commands.literal("list").executes(AiCommands::adminList))
+                                .then(Commands.literal("killall").executes(AiCommands::adminKillAll))
+                                .then(Commands.literal("disable").executes(AiCommands::adminDisable))
+                                .then(Commands.literal("enable").executes(AiCommands::adminEnable))
+                                .then(Commands.literal("reload").executes(AiCommands::adminReload))
+                                .then(Commands.literal("maxbots")
+                                        .then(Commands.argument("count", IntegerArgumentType.integer(0, 50))
+                                                .executes(ctx -> adminMaxBots(ctx,
+                                                        IntegerArgumentType.getInteger(ctx, "count"))))))
+
                         // ── /ai <task> — natural language, must be last (greedy) ──────
                         .then(Commands.argument("task", StringArgumentType.greedyString())
                                 .executes(ctx -> doTask(ctx, StringArgumentType.getString(ctx, "task"))))
@@ -141,7 +166,8 @@ public class AiCommands {
                 "§f/ai active on|off §7— toggle proactive analysis of every message\n" +
                 "§f/ai commands on|off §7— let it run commands (/setblock, /fill, redstone…)\n" +
                 "§f/ai dismiss §7— send it away\n" +
-                "§f/ai settings §7— list settings; §f/ai settings <key> <value>§7 changes any one"
+                "§f/ai settings §7— list settings; §f/ai settings <key> <value>§7 changes any one\n" +
+                "§f/ai admin §7— (ops) admin panel: manage/kill all bots, stats, bot cap"
         ));
         return 1;
     }
@@ -151,6 +177,17 @@ public class AiCommands {
     private static int summon(CommandContext<CommandSourceStack> ctx, String name) {
         ServerPlayer player = getPlayer(ctx);
         if (player == null) return 0;
+
+        // Enforce the owner-set, server-wide bot cap (anti-grief / anti-lag).
+        MinecraftServer server = player.level().getServer();
+        int max = ModConfig.get().maxBotsPerServer;
+        if (server != null && max > 0 && AiAssistantEntity.countAll(server) >= max) {
+            player.sendSystemMessage(Component.literal(
+                    "§cThis server is at its Blockpal limit (" + max + " bots). "
+                            + "An admin can raise it with §f/ai admin maxbots <n>§c, "
+                            + "or clear some with §f/ai admin killall§c."));
+            return 0;
+        }
 
         ServerLevel level = player.level();
         AiAssistantEntity entity = ModEntities.AI_ASSISTANT.create(level, EntitySpawnReason.COMMAND);
@@ -274,7 +311,8 @@ public class AiCommands {
     private static int setToken(CommandContext<CommandSourceStack> ctx, String token) {
         ServerPlayer player = getPlayer(ctx);
         if (player == null) return 0;
-        ModConfig.get().hfToken = token.trim();
+        if (denyIfNotAdmin(ctx)) return 0;
+        ModConfig.get().setToken(token);
         ModConfig.save();
         player.sendSystemMessage(Component.literal("§aAPI token saved ✓ §7Your assistant can now take tasks."));
         return 1;
@@ -305,6 +343,7 @@ public class AiCommands {
     private static int setListen(CommandContext<CommandSourceStack> ctx, boolean on) {
         ServerPlayer player = getPlayer(ctx);
         if (player == null) return 0;
+        if (denyIfNotAdmin(ctx)) return 0;
         ModConfig.get().chatListening = on;
         ModConfig.save();
         player.sendSystemMessage(Component.literal(on
@@ -326,6 +365,7 @@ public class AiCommands {
     private static int setActive(CommandContext<CommandSourceStack> ctx, boolean on) {
         ServerPlayer player = getPlayer(ctx);
         if (player == null) return 0;
+        if (denyIfNotAdmin(ctx)) return 0;
         ModConfig.get().activeMode = on;
         ModConfig.save();
         player.sendSystemMessage(Component.literal(on
@@ -348,6 +388,7 @@ public class AiCommands {
     private static int setAllowCommands(CommandContext<CommandSourceStack> ctx, boolean on) {
         ServerPlayer player = getPlayer(ctx);
         if (player == null) return 0;
+        if (denyIfNotAdmin(ctx)) return 0;
         ModConfig.get().allowCommands = on;
         ModConfig.save();
         player.sendSystemMessage(Component.literal(on
@@ -362,6 +403,7 @@ public class AiCommands {
     private static int openMenu(CommandContext<CommandSourceStack> ctx) {
         ServerPlayer player = getPlayer(ctx);
         if (player == null) return 0;
+        if (denyIfNotAdmin(ctx)) return 0;
 
         if (!ServerPlayNetworking.canSend(player, ConfigSyncPayload.TYPE)) {
             player.sendSystemMessage(Component.literal(
@@ -391,9 +433,12 @@ public class AiCommands {
                 "§eChat listening: §f" + (cfg.chatListening ? "on" : "off") + "\n" +
                 "§eActive analysis:§f " + (cfg.activeMode ? "on" : "off") + "\n" +
                 "§eRun commands:   §f" + (cfg.allowCommands ? "on (level " + cfg.commandPermissionLevel + ")" : "off") + "\n" +
+                "§eAdmin level:    §f" + cfg.adminPermissionLevel + "  §7(/ai settings admin_level <0-4>)\n" +
+                "§eMax bots:       §f" + (cfg.maxBotsPerServer == 0 ? "unlimited" : cfg.maxBotsPerServer) + "\n" +
                 "§eModel:          §f" + cfg.hfModel + "\n" +
                 "§eAPI URL:        §f" + cfg.apiUrl + "\n" +
-                "§eAPI token:      §f" + (cfg.hasApiToken() ? "set ✓" : "§cnot set — /ai token <token>") + "\n" +
+                "§eAPI token:      §f" + (cfg.hasApiToken()
+                        ? ("set ✓" + (cfg.isTokenFromEnv() ? " §7(from env)" : "")) : "§cnot set — /ai token <token>") + "\n" +
                 "§eTemperature:    §f" + cfg.temperature + "\n" +
                 "§eMax tokens:     §f" + cfg.maxNewTokens + "\n" +
                 "§eFollow dist:    §f" + cfg.followDistance + "\n" +
@@ -410,9 +455,9 @@ public class AiCommands {
     /** Every key accepted by {@code /ai settings <key> <value>}. */
     private static final String[] SETTING_KEYS = {
             "name", "skin", "model", "api_url", "token", "temperature", "max_tokens",
-            "follow_distance", "guard_radius", "command_level", "max_task_seconds",
-            "action_tick_delay", "flee_health", "chat_listening", "active_mode",
-            "allow_commands", "debug_logging", "sneak_menu", "preset"
+            "follow_distance", "guard_radius", "command_level", "admin_level", "max_bots",
+            "max_task_seconds", "action_tick_delay", "flee_health", "chat_listening",
+            "active_mode", "allow_commands", "debug_logging", "sneak_menu", "preset"
     };
 
     private static final com.mojang.brigadier.suggestion.SuggestionProvider<CommandSourceStack> SETTING_KEYS_SUGGEST =
@@ -428,6 +473,7 @@ public class AiCommands {
     private static int applySetting(CommandContext<CommandSourceStack> ctx, String key, String raw) {
         ServerPlayer player = getPlayer(ctx);
         if (player == null) return 0;
+        if (denyIfNotAdmin(ctx)) return 0;
         ModConfig cfg = ModConfig.get();
         key = key.toLowerCase(java.util.Locale.ROOT).trim();
         String value = raw.trim();
@@ -438,12 +484,14 @@ public class AiCommands {
                 case "skin"              -> cfg.defaultSkin = require(value);
                 case "model"             -> cfg.hfModel = require(value);
                 case "api_url"           -> cfg.apiUrl = require(value);
-                case "token"             -> cfg.hfToken = value;
+                case "token"             -> cfg.setToken(value);
                 case "temperature"       -> cfg.temperature = clampD(parseD(value), 0.0, 2.0);
                 case "max_tokens"        -> cfg.maxNewTokens = clampI(parseI(value), 32, 2048);
                 case "follow_distance"   -> cfg.followDistance = clampD(parseD(value), 1.0, 32.0);
                 case "guard_radius"      -> cfg.guardRadius = clampD(parseD(value), 4.0, 64.0);
                 case "command_level"     -> cfg.commandPermissionLevel = clampI(parseI(value), 0, 4);
+                case "admin_level"       -> cfg.adminPermissionLevel = clampI(parseI(value), 0, 4);
+                case "max_bots"          -> cfg.maxBotsPerServer = clampI(parseI(value), 0, 50);
                 case "max_task_seconds"  -> cfg.maxTaskSeconds = clampI(parseI(value), 0, 3600);
                 case "action_tick_delay" -> cfg.actionTickDelay = clampI(parseI(value), 0, 40);
                 case "flee_health"       -> cfg.fleeHealthPercent = clampD(parseD(value), 0.0, 1.0);
@@ -536,7 +584,141 @@ public class AiCommands {
         return 1;
     }
 
+    // ── admin (/ai admin …) — ops only ──────────────────────────────────────────
+
+    private static int adminHelp(CommandContext<CommandSourceStack> ctx) {
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "§6=== Blockpal Admin (ops only) ===\n" +
+                "§f/ai admin menu §7— open the visual admin panel\n" +
+                "§f/ai admin stats §7— bots, players, FPS, mod status\n" +
+                "§f/ai admin list §7— every bot and where it is\n" +
+                "§f/ai admin killall §7— remove all bots on the server\n" +
+                "§f/ai admin maxbots <0-50> §7— cap bots per server (0 = unlimited)\n" +
+                "§f/ai admin disable§7 / §fenable §7— turn all bots off / on\n" +
+                "§f/ai admin reload §7— reload config from disk\n" +
+                "§7Admin tier: §f/ai settings admin_level <0-4>§7 (default: ops = 2)"), false);
+        return 1;
+    }
+
+    private static int adminMenu(CommandContext<CommandSourceStack> ctx) {
+        ServerPlayer player = getPlayer(ctx);
+        if (player == null) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "§7Run §f/ai admin stats§7 from the console for a text summary."), false);
+            return 0;
+        }
+        if (!ServerPlayNetworking.canSend(player, AdminSyncPayload.TYPE)) {
+            player.sendSystemMessage(Component.literal(
+                    "§eThe admin menu needs the Blockpal mod on your client. "
+                            + "Use §f/ai admin stats§e instead."));
+            return 0;
+        }
+        AiNetworking.openAdminMenuFor(player);
+        player.sendSystemMessage(Component.literal("§7Opening the Blockpal admin menu…"));
+        return 1;
+    }
+
+    private static int adminStats(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        if (server == null) return 0;
+        AdminStatsData d = AdminStatsData.gather(server);
+
+        StringBuilder sb = new StringBuilder("§6=== Blockpal Admin — Stats ===");
+        sb.append("\n§eBots:           §f").append(d.totalBots()).append(" §7/ ")
+                .append(d.maxBots() == 0 ? "unlimited" : d.maxBots());
+        sb.append("\n§eMod status:     ").append(d.modDisabled()
+                ? "§cDISABLED §7(/ai resume)" : "§aactive");
+        sb.append("\n§eAllow commands: §f").append(d.allowCommands()
+                ? "on (lvl " + d.commandLevel() + ")" : "off");
+        sb.append("\n§eAdmin level:    §f").append(d.adminLevel());
+        sb.append("\n§eAPI token:      §f").append(d.tokenSet()
+                ? ("set ✓" + (d.tokenFromEnv() ? " §7(from env)" : "")) : "§cnot set");
+        sb.append("\n§ePlayers online (§f").append(d.players().size()).append("§e):");
+        if (d.players().isEmpty()) sb.append(" §7none");
+        for (AdminStatsData.PlayerRow p : d.players()) {
+            sb.append("\n§f  ").append(p.name()).append(" §7bots:§f ").append(p.bots())
+                    .append(" §7fps:§f ").append(p.fps() < 0 ? "?" : p.fps());
+        }
+        sb.append("\n§7Open the visual panel with §f/ai admin menu§7.");
+
+        final String out = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(out), false);
+        return 1;
+    }
+
+    private static int adminList(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        if (server == null) return 0;
+        AdminStatsData d = AdminStatsData.gather(server);
+
+        StringBuilder sb = new StringBuilder("§6=== Blockpal — Bots (" + d.bots().size() + ") ===");
+        if (d.bots().isEmpty()) sb.append("\n§7No bots currently loaded in the world.");
+        for (AdminStatsData.BotRow b : d.bots()) {
+            sb.append("\n§f").append(b.name()).append(" §7(").append(b.owner()).append(") §7— ")
+                    .append(b.mode().toLowerCase(java.util.Locale.ROOT)).append(" §7— ").append(b.dim())
+                    .append(" §7— hp ").append(b.health())
+                    .append(" §7@ ").append(b.x()).append(",").append(b.y()).append(",").append(b.z());
+        }
+        final String out = sb.toString();
+        ctx.getSource().sendSuccess(() -> Component.literal(out), false);
+        return 1;
+    }
+
+    private static int adminKillAll(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        if (server == null) return 0;
+        int n = AiAssistantEntity.killAll(server);
+        server.getPlayerList().broadcastSystemMessage(Component.literal(
+                "§c[Blockpal] An admin removed all bots (" + n + ")."), false);
+        return 1;
+    }
+
+    private static int adminDisable(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        if (server == null) return 0;
+        com.milkdromeda.blockpal.EmergencyState.setDisabled(true);
+        server.getPlayerList().broadcastSystemMessage(Component.literal(
+                "§c[Blockpal] Bots disabled by an admin. Use §e/ai resume§c (or /ai admin enable) to re-enable."), false);
+        return 1;
+    }
+
+    private static int adminEnable(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        if (server == null) return 0;
+        com.milkdromeda.blockpal.EmergencyState.setDisabled(false);
+        server.getPlayerList().broadcastSystemMessage(Component.literal(
+                "§a[Blockpal] Bots re-enabled by an admin."), false);
+        return 1;
+    }
+
+    private static int adminReload(CommandContext<CommandSourceStack> ctx) {
+        ModConfig.load();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "§a[Blockpal] Reloaded config from disk."), false);
+        return 1;
+    }
+
+    private static int adminMaxBots(CommandContext<CommandSourceStack> ctx, int count) {
+        ModConfig.get().maxBotsPerServer = count;   // arg already constrained to 0..50
+        ModConfig.save();
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "§a[Blockpal] Max bots per server = " + (count == 0 ? "unlimited" : count)), false);
+        return 1;
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    /** Politely refuses a config change for non-admins; true when it denied. */
+    private static boolean denyIfNotAdmin(CommandContext<CommandSourceStack> ctx) {
+        if (AdminAccess.isAdmin(ctx.getSource())) return false;
+        ServerPlayer player = getPlayer(ctx);
+        if (player != null) {
+            player.sendSystemMessage(Component.literal(
+                    "§cOnly server admins can change Blockpal's settings. Ask an operator "
+                            + "(or have one raise §f/ai settings admin_level§c)."));
+        }
+        return true;
+    }
 
     private static ServerPlayer getPlayer(CommandContext<CommandSourceStack> ctx) {
         try { return ctx.getSource().getPlayerOrException(); } catch (Exception e) { return null; }

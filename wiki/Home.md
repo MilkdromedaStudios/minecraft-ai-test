@@ -30,6 +30,11 @@ and configures itself from a real in-game settings screen.
 - **Inventory & gear** — picks up drops, auto-equips the best weapon/armor, eats food.
 - **Custom skins** — built-in palettes or your own PNG. See [Custom Skins](Custom-Skins).
 - **Emergency FPS kill-switch** — auto-disables the mod if framerate collapses.
+- **Admin menu (ops)** — manage/kill all bots, set a bot cap, and see live stats
+  (bots, players, FPS). See [Admin Menu](Admin-Menu).
+- **Locked-down config & key protection** — only operators can change server-wide
+  settings; your API key is obfuscated at rest and can live in an env var. See
+  [Security](Security).
 - **Works in every gamemode** — survival, adventure and creative.
 
 ## Full page index
@@ -45,6 +50,9 @@ and configures itself from a real in-game settings screen.
 | [Custom Skins](Custom-Skins) | Built-in and drop-in skins |
 | [Running Commands](Running-Commands) | Command execution, permission levels, denylist |
 | [AI Actions](AI-Actions) | The 16 action types the planner can use |
+| [Admin Menu](Admin-Menu) | Ops-only panel: manage/kill all bots, bot cap, live stats |
+| [Security](Security) | Permission gating, API-key protection, what `.gitignore` can't do |
+| [Terms & Policy](Terms-and-Policy) | Fair-use / no-cheating policy and disclaimers |
 | [Developer Menu](Developer-Menu) | What every high-risk developer setting does |
 | [More Info](More-Info) | How it works, architecture, changelog, precautions |
 | [Troubleshooting](Troubleshooting) | Fixes for common problems |

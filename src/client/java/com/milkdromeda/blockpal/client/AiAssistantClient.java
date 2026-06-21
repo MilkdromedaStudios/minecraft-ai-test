@@ -1,10 +1,12 @@
 package com.milkdromeda.blockpal.client;
 
 import com.milkdromeda.blockpal.ModEntities;
+import com.milkdromeda.blockpal.client.gui.AdminScreen;
 import com.milkdromeda.blockpal.client.gui.AiConfigScreen;
 import com.milkdromeda.blockpal.client.render.AiAssistantEntityModel;
 import com.milkdromeda.blockpal.client.render.AiAssistantEntityRenderer;
 import com.milkdromeda.blockpal.client.render.RuntimeSkins;
+import com.milkdromeda.blockpal.network.AdminSyncPayload;
 import com.milkdromeda.blockpal.network.ConfigSyncPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -36,6 +38,12 @@ public class AiAssistantClient implements ClientModInitializer {
                     FpsGuardian.setPreset(payload.data().performancePreset());
                     context.client().setScreenAndShow(new AiConfigScreen(payload.data()));
                 }));
+
+        // Server sent an admin snapshot (via /ai admin menu, or after an action) —
+        // open/refresh the admin panel. Only admins ever receive this packet.
+        ClientPlayNetworking.registerGlobalReceiver(AdminSyncPayload.TYPE, (payload, context) ->
+                context.client().execute(() ->
+                        context.client().setScreenAndShow(new AdminScreen(payload.data()))));
 
         // Extreme frame-rate watchdog: auto-disable the mod if FPS collapses.
         FpsGuardian.register();

@@ -76,7 +76,7 @@ public record ConfigData(
         c.activeMode = activeMode;
         c.debugLogging = debugLogging;
         if (notBlank(defaultName)) c.defaultName = defaultName.trim();
-        if (notBlank(token)) c.hfToken = token.trim();   // blank = keep existing
+        if (notBlank(token)) c.setToken(token.trim());   // blank = keep existing
         if (notBlank(model)) c.hfModel = model.trim();
         if (notBlank(apiUrl)) c.apiUrl = apiUrl.trim();
         c.temperature = clamp(temperature, 0.0, 2.0);

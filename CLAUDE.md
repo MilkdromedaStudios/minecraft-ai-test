@@ -94,7 +94,49 @@ can do and how it evolved.
 | `/ai commands on\|off` | Allow/block command execution |
 | `/ai settings` | List all current settings |
 | `/ai settings <key> <value>` | Change any one setting (tab-complete the key) |
+| `/ai admin …` | **(ops only)** admin panel — see *Admin menu* below |
 | `/ai <task>` | Give a natural-language task |
+
+**Config writes are admin-gated (3.2.0+).** `/ai menu`, `/ai token`,
+`/ai settings <key> <value>`, `/ai listen|active|commands on\|off` and the
+sneak-click menu now require the admin permission level (`adminPermissionLevel`,
+default 2 = ops). Everyday commands (summon, follow, come, stay, stop, locate,
+inventory, skin, name) stay open to everyone, and read-only `/ai settings` (list)
+and `/ai help` stay open too.
+
+### Admin menu (ops only)
+- `/ai admin menu` opens a built-in **admin panel** GUI (`AdminScreen`,
+  server-authoritative); `/ai admin stats` / `list` give the same info as text for
+  vanilla clients.
+- **Manage all bots globally** — `/ai admin killall` removes every Blockpal entity
+  on the server; `/ai admin list` shows each bot's owner, mode, dimension, health
+  and position. (Backed by static `AiAssistantEntity.all/countAll/countOwnedBy/killAll`.)
+- **Global controls** — `/ai admin disable|enable` toggles the mod-wide kill switch
+  for everyone; `/ai admin reload` re-reads config from disk.
+- **Stats** — total bots vs. cap, mod status, per-player bot counts and **live FPS**
+  (clients report FPS ~1×/s via `ClientStatsPayload`; the server stores it in
+  `PlayerStatsTracker`), plus token/command status.
+- **Bot cap** — `/ai admin maxbots <0-50>` (or the −/＋ buttons / `/ai settings
+  max_bots`) sets `maxBotsPerServer`; `/ai summon` refuses past the cap. 0 = unlimited.
+- Who counts as admin is `adminPermissionLevel` (vanilla tiers 0/2/4), changed with
+  `/ai settings admin_level <0-4>`. Data flows over `AdminSyncPayload` (S→C) and
+  `AdminActionPayload` (C→S), re-checked server-side in `AiNetworking`.
+
+### Security & API-key protection
+- **Authoritative permission checks** — every state-changing server-bound packet
+  (`ConfigUpdatePayload`, `AdminActionPayload`) re-checks the sender's permission via
+  `AdminAccess`, so a modified client can't rewrite the token / API URL / command
+  tier or run admin actions even by forging a packet or hiding the UI. This closed a
+  real privilege-escalation hole where any client could overwrite global config.
+- **Token never leaves the server** — config sync to clients already omits the token
+  (`ConfigData` sends only `tokenSet`); it's never logged.
+- **Token at rest** — stored **obfuscated** in `config.json` (`hfTokenObf`, reversible
+  XOR — *obfuscation, not encryption*; a mod jar is decompilable). Legacy plaintext
+  tokens migrate to obfuscated on first save.
+- **Env-var override** — set `BLOCKPAL_API_TOKEN` (or `-Dblockpal.apiToken`) and the
+  token is used but **never written to disk** (`isTokenFromEnv()`) — the strong option.
+- **`.gitignore`** hardened to keep secrets/config out of git. (It can't "hide" mod
+  source — that lives in the distributed jar — see `wiki/Security.md`.)
 
 ### Inventory & equipment
 - **10-slot backpack** plus four armor slots and main hand.
@@ -133,15 +175,20 @@ can do and how it evolved.
   false/0) via a `migrate()` step, while existing values like `hfToken` are
   preserved. So your API key carries across mod updates, and a deleted file just
   comes back as defaults.
-- Full list of settings: `hfToken`, `hfModel`, `apiUrl`, `maxNewTokens`,
+- Full list of settings: `hfToken`/`hfTokenObf`, `hfModel`, `apiUrl`, `maxNewTokens`,
   `temperature`, `debugLogging`, `actionTickDelay`, `followDistance`,
   `guardRadius`, `fleeHealthPercent`, `allowCommands`,
-  `commandPermissionLevel`, `chatListening`, `activeMode`, `defaultName`,
+  `commandPermissionLevel`, `adminPermissionLevel`, `maxBotsPerServer`,
+  `chatListening`, `activeMode`, `defaultName`,
   `defaultSkin`, `maxTaskSeconds`, `performancePreset`, `sneakToOpenMenu`,
   `configVersion`.
 - **Every setting is also command-configurable**: `/ai settings <key> <value>`
   is a single generic setter (tab-complete the key) covering all of the above,
-  so the command surface stays small.
+  so the command surface stays small. Setting changes are **admin-gated** (3.2.0+).
+- `adminPermissionLevel` (default 2) decides who may change settings / use the admin
+  menu; `maxBotsPerServer` (default 8, 0 = unlimited) caps `/ai summon`. The token is
+  persisted obfuscated (`hfTokenObf`) and can be supplied via the `BLOCKPAL_API_TOKEN`
+  env var instead (then it's never written to disk). See *Security & API-key protection*.
 
 ### In-game settings GUI
 - Opened via `/ai menu` or — unless disabled — sneak-right-click on the
@@ -178,6 +225,40 @@ can do and how it evolved.
 ---
 
 ## Changelog
+
+### 3.2.0
+- **Built-in admin menu (ops only).** New `/ai admin …` command tree and an
+  `AdminScreen` GUI (`/ai admin menu`) for world owners / operators: **manage all
+  bots globally** (`list`, `killall`), global **disable/enable**, `reload`, set the
+  **bot cap** (`maxbots`), and **view stats** — total bots vs. cap, mod status,
+  per-player bot counts and **live FPS**. Clients report FPS ~1×/s
+  (`ClientStatsPayload` → `PlayerStatsTracker`). Text fallbacks (`/ai admin stats`,
+  `list`) work on vanilla clients and the console. Data rides `AdminSyncPayload`
+  (S→C) and `AdminActionPayload` (C→S); both re-checked server-side. New
+  `AdminAccess` helper + static `AiAssistantEntity.all/countAll/countOwnedBy/killAll`.
+- **Server-wide bot cap.** New `maxBotsPerServer` (default 8, 0 = unlimited);
+  `/ai summon` refuses past it. Owner-controlled via `/ai admin maxbots <0-50>`, the
+  menu's −/＋ buttons, or `/ai settings max_bots`.
+- **Security — closed a privilege-escalation hole.** Previously *any* client with the
+  mod could rewrite global server config (API token, API URL, model, command
+  permission tier) by sending `ConfigUpdatePayload`, and toggle the mod-wide kill
+  switch. Now every state-changing server-bound packet re-checks the sender's
+  permission, and config-writing commands (`/ai menu`, `/ai token`,
+  `/ai settings <key> <value>`, `/ai listen|active|commands`, sneak-click menu) are
+  **admin-gated**. New `adminPermissionLevel` (default 2 = ops) decides who's an admin
+  (`/ai settings admin_level <0-4>`). Everyday commands stay open to everyone.
+- **API-key protection.** The HuggingFace token is now stored **obfuscated** at rest
+  (`hfTokenObf`; reversible XOR — obfuscation, not encryption) instead of plaintext;
+  legacy plaintext tokens migrate automatically. It can instead be supplied via the
+  `BLOCKPAL_API_TOKEN` env var / `-Dblockpal.apiToken` property, in which case it is
+  used but **never written to disk**. The token is still never sent to clients or logged.
+- **`.gitignore` hardened** to keep the runtime config and stray token files out of
+  git, with a note that a mod jar is decompilable so `.gitignore` can't hide source.
+- **Config schema → v2.** Added `adminPermissionLevel`, `maxBotsPerServer`,
+  `hfTokenObf`; `migrate()` gives upgrading installs safe defaults (admin = ops, an
+  8-bot cap) instead of Java's 0 (= everyone admin / unlimited).
+- **Docs:** new `wiki/Admin-Menu.md`, `wiki/Security.md` and `wiki/Terms-and-Policy.md`;
+  updated `wiki/Commands.md`, `wiki/Settings.md`, `wiki/Home.md`, `wiki/_Sidebar.md`.
 
 ### 3.1.0
 - **Updated to Minecraft 26.2** (the "All En" update). `minecraft_version` →

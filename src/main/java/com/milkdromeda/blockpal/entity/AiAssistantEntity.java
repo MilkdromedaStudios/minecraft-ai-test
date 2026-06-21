@@ -116,7 +116,10 @@ public class AiAssistantEntity extends PathfinderMob {
     @Override
     protected InteractionResult mobInteract(Player player, InteractionHand hand) {
         if (!level().isClientSide() && player instanceof ServerPlayer sp) {
-            if (sp.isShiftKeyDown() && ModConfig.get().sneakToOpenMenu) {
+            // The settings menu is admin-only (it writes server-wide config), so a
+            // non-admin sneak-click just toggles follow/stay like a normal tap.
+            if (sp.isShiftKeyDown() && ModConfig.get().sneakToOpenMenu
+                    && com.milkdromeda.blockpal.admin.AdminAccess.isAdmin(sp)) {
                 AiNetworking.openMenuFor(sp);
             } else if (mode == Mode.FOLLOWING) {
                 stayHere();
@@ -726,5 +729,41 @@ public class AiAssistantEntity extends PathfinderMob {
                         .comparingInt((AiAssistantEntity a) -> a.isOwnedBy(player) ? 0 : 1)
                         .thenComparingDouble(a -> a.distanceToSqr(player)))
                 .orElse(null);
+    }
+
+    // ---- Global registry helpers (used by the admin menu & the spawn cap) ----
+
+    /** Every live assistant on the whole server, across all dimensions. */
+    public static List<AiAssistantEntity> all(MinecraftServer server) {
+        List<AiAssistantEntity> list = new ArrayList<>();
+        if (server == null) return list;
+        for (ServerLevel level : server.getAllLevels()) {
+            for (Entity e : level.getAllEntities()) {
+                if (e instanceof AiAssistantEntity ai && ai.isAlive()) list.add(ai);
+            }
+        }
+        return list;
+    }
+
+    /** Total number of assistants currently on the server. */
+    public static int countAll(MinecraftServer server) {
+        return all(server).size();
+    }
+
+    /** How many assistants a given owner currently has out. */
+    public static int countOwnedBy(MinecraftServer server, UUID owner) {
+        if (owner == null) return 0;
+        int n = 0;
+        for (AiAssistantEntity ai : all(server)) {
+            if (owner.equals(ai.getOwnerUuid())) n++;
+        }
+        return n;
+    }
+
+    /** Removes every assistant on the server; returns how many were removed. */
+    public static int killAll(MinecraftServer server) {
+        List<AiAssistantEntity> all = all(server);
+        for (AiAssistantEntity ai : all) ai.discard();
+        return all.size();
     }
 }

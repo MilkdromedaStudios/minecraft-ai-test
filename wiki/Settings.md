@@ -3,6 +3,11 @@
 Every option can be changed two ways: the in-game **settings screen** or the
 **`/ai settings`** command. Both write to the same `config/blockpal/config.json`.
 
+> **Operator-only (3.2.0+).** Settings are server-wide, so **changing** them — the
+> menu, `/ai token`, and `/ai settings <key> <value>` — requires admin permission
+> (`adminPermissionLevel`, default 2 = ops). Reading the list with `/ai settings`
+> stays open to everyone. See **[Security](Security)** and **[Admin Menu](Admin-Menu)**.
+
 ## Settings screen — `/ai menu`
 
 Open with `/ai menu` (always works) or — unless disabled — sneak-right-click on the
@@ -41,12 +46,26 @@ assistant. It's a five-tab screen:
 ## Full list of keys
 
 `name` · `skin` · `model` · `api_url` · `token` · `temperature` · `max_tokens` ·
-`follow_distance` · `guard_radius` · `command_level` · `max_task_seconds` ·
-`action_tick_delay` · `flee_health` · `chat_listening` · `active_mode` ·
-`allow_commands` · `debug_logging` · `sneak_menu` · `preset`
+`follow_distance` · `guard_radius` · `command_level` · `admin_level` · `max_bots` ·
+`max_task_seconds` · `action_tick_delay` · `flee_health` · `chat_listening` ·
+`active_mode` · `allow_commands` · `debug_logging` · `sneak_menu` · `preset`
 
 > `max_task_seconds`, `action_tick_delay` and `flee_health` are the high-risk
 > Developer-tab settings — read **[Developer Menu](Developer-Menu)** before changing them.
+
+### Admin & limits
+
+| Key | Meaning |
+|-----|---------|
+| `admin_level` | Permission level (0/2/4) needed to change settings or use `/ai admin`. Default **2** (ops). `4` = full operator / world owner only. |
+| `max_bots` | Max Blockpal entities on the server at once; `/ai summon` refuses past it. Default **8**, `0` = unlimited. Also `/ai admin maxbots <n>`. |
+
+### API token security
+
+The token is **never** shown back, never logged, and stored **obfuscated** in
+`config.json` (`hfTokenObf`) rather than as plain text. For the strongest protection,
+set it via the `BLOCKPAL_API_TOKEN` environment variable instead — then it's used but
+never written to disk. Full details in **[Security](Security)**.
 
 ## Persistence & versioning
 
